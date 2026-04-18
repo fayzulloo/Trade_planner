@@ -52,3 +52,4 @@ trade_planner/
     ├── calculator.py       # Strategiya hisoblash
     └── chart.py            # Grafik yaratish
 ```
+# Trade_planner
