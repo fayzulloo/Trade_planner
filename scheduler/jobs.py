@@ -27,7 +27,7 @@ async def send_daily_reminders(bot):
                 if not settings:
                     continue
 
-                day = get_current_day(settings["start_date"])
+                day = get_current_day(settings["start_date"], settings["total_days"])
                 total_days = settings["total_days"]
                 if day > total_days:
                     continue

@@ -65,6 +65,61 @@ async def upsert_setting(user_id: int, key: str, value):
     logger.info(f"Sozlama: user_id={user_id}, {key}={value}")
 
 
+async def save_all_settings(user_id: int, data: dict):
+    """Barcha sozlamalarni bir vaqtda saqlaydi"""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        existing = await conn.fetchrow(
+            "SELECT id FROM settings WHERE user_id = $1", user_id
+        )
+        if existing:
+            await conn.execute("""
+                UPDATE settings SET
+                    starting_balance  = $2,
+                    daily_profit_rate = $3,
+                    extra_target      = $4,
+                    withdrawal_amount = $5,
+                    withdrawal_every  = $6,
+                    total_days        = $7,
+                    start_date        = $8,
+                    timezone          = $9,
+                    reminder_time     = $10,
+                    is_active         = TRUE
+                WHERE user_id = $1
+            """,
+                user_id,
+                data.get("starting_balance"),
+                data.get("daily_profit_rate"),
+                data.get("extra_target"),
+                data.get("withdrawal_amount"),
+                data.get("withdrawal_every"),
+                data.get("total_days"),
+                data.get("start_date"),
+                data.get("timezone"),
+                data.get("reminder_time"),
+            )
+        else:
+            await conn.execute("""
+                INSERT INTO settings
+                    (user_id, starting_balance, daily_profit_rate, extra_target,
+                     withdrawal_amount, withdrawal_every, total_days, start_date,
+                     timezone, reminder_time, is_active)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,TRUE)
+            """,
+                user_id,
+                data.get("starting_balance"),
+                data.get("daily_profit_rate"),
+                data.get("extra_target"),
+                data.get("withdrawal_amount"),
+                data.get("withdrawal_every"),
+                data.get("total_days"),
+                data.get("start_date"),
+                data.get("timezone"),
+                data.get("reminder_time"),
+            )
+    logger.info(f"Barcha sozlamalar saqlandi: user_id={user_id}")
+
+
 async def activate_strategy(user_id: int):
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -114,6 +169,7 @@ async def create_today_journal(user_id: int, day_number: int, start_balance: flo
 
 
 async def update_journal_pnl(user_id: int):
+    """Faqat bugungi kun savdolarini hisoblaydi"""
     today = date.today()
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -123,9 +179,15 @@ async def update_journal_pnl(user_id: int):
         )
         if not row:
             return
+        day_number = row["day_number"]
+        # Faqat bugungi kun savdolari
         pnl_row = await conn.fetchrow(
-            "SELECT COALESCE(SUM(pnl), 0) AS total FROM trades WHERE user_id = $1 AND day_number = $2",
-            user_id, row["day_number"]
+            """SELECT COALESCE(SUM(pnl), 0) AS total
+               FROM trades
+               WHERE user_id = $1
+                 AND day_number = $2
+                 AND DATE(created_at) = $3""",
+            user_id, day_number, today
         )
         await conn.execute(
             "UPDATE daily_journal SET actual_pnl = $1 WHERE user_id = $2 AND date = $3",
@@ -144,9 +206,10 @@ async def complete_day(user_id: int) -> dict:
         if not journal:
             return {}
         journal = dict(journal)
-        end_balance = float(journal["start_balance"]) + float(journal["actual_pnl"])
+        end_balance = float(journal["start_balance"]) + float(journal["actual_pnl"] or 0)
         if journal["withdrawal_confirmed"]:
-            end_balance -= float(journal["withdrawal_amount"])
+            end_balance -= float(journal["withdrawal_amount"] or 0)
+        end_balance = round(end_balance, 2)
         await conn.execute("""
             UPDATE daily_journal
             SET is_completed = TRUE, end_balance = $1, completed_at = NOW()
@@ -166,23 +229,30 @@ async def confirm_withdrawal(user_id: int):
 
 
 async def get_journal_range(user_id: int, from_date: str, to_date: str) -> list:
+    """Faqat ish kunlarini qaytaradi (shanba/yakshanba yo'q)"""
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch("""
             SELECT * FROM daily_journal
-            WHERE user_id = $1 AND date >= $2::date AND date <= $3::date
+            WHERE user_id = $1
+              AND date >= $2::date
+              AND date <= $3::date
+              AND EXTRACT(DOW FROM date) NOT IN (0, 6)
             ORDER BY date ASC
         """, user_id, from_date, to_date)
     return [dict(r) for r in rows]
 
 
 async def get_all_journals(user_id: int) -> list:
+    """Faqat ish kunlari — strategiya hisoblash uchun"""
     pool = await get_pool()
     async with pool.acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT * FROM daily_journal WHERE user_id = $1 ORDER BY date ASC",
-            user_id
-        )
+        rows = await conn.fetch("""
+            SELECT * FROM daily_journal
+            WHERE user_id = $1
+              AND EXTRACT(DOW FROM date) NOT IN (0, 6)
+            ORDER BY date ASC
+        """, user_id)
     return [dict(r) for r in rows]
 
 
@@ -203,11 +273,17 @@ async def add_trade(user_id: int, day_number: int, symbol: str, direction: str,
 
 
 async def get_trades_by_day(user_id: int, day_number: int) -> list:
+    """Faqat bugungi sanaga tegishli savdolar"""
+    today = date.today()
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT * FROM trades WHERE user_id = $1 AND day_number = $2 ORDER BY created_at",
-            user_id, day_number
+            """SELECT * FROM trades
+               WHERE user_id = $1
+                 AND day_number = $2
+                 AND DATE(created_at) = $3
+               ORDER BY created_at""",
+            user_id, day_number, today
         )
     return [dict(r) for r in rows]
 
@@ -218,7 +294,10 @@ async def get_trades_range(user_id: int, from_date: str, to_date: str) -> list:
         rows = await conn.fetch("""
             SELECT t.* FROM trades t
             JOIN daily_journal dj ON t.user_id = dj.user_id AND t.day_number = dj.day_number
-            WHERE t.user_id = $1 AND dj.date >= $2::date AND dj.date <= $3::date
+            WHERE t.user_id = $1
+              AND dj.date >= $2::date
+              AND dj.date <= $3::date
+              AND EXTRACT(DOW FROM dj.date) NOT IN (0, 6)
             ORDER BY t.created_at ASC
         """, user_id, from_date, to_date)
     return [dict(r) for r in rows]

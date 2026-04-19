@@ -149,7 +149,7 @@ async def trade_pnl(message: Message, state: FSMContext, db_user_id: int):
         await state.clear()
 
         settings = await get_settings(db_user_id)
-        day = get_current_day(settings["start_date"])
+        day = get_current_day(settings["start_date"], settings["total_days"])
 
         await add_trade(
             user_id=db_user_id,

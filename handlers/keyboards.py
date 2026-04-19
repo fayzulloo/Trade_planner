@@ -36,20 +36,6 @@ def confirm_keyboard(action: str) -> InlineKeyboardMarkup:
     ])
 
 
-def settings_inline() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💰 Boshlang'ich balans", callback_data="set_balance")],
-        [InlineKeyboardButton(text="📊 Kunlik % (hozir: 20%)", callback_data="set_rate")],
-        [InlineKeyboardButton(text="➕ Qo'shimcha maqsad ($)", callback_data="set_extra")],
-        [InlineKeyboardButton(text="💸 Yechish summasi", callback_data="set_withdrawal")],
-        [InlineKeyboardButton(text="📅 Yechish davri (har necha kunda)", callback_data="set_wevery")],
-        [InlineKeyboardButton(text="🗓 Kun soni", callback_data="set_days")],
-        [InlineKeyboardButton(text="📆 Boshlanish sanasi", callback_data="set_startdate")],
-        [InlineKeyboardButton(text="🌍 Timezone", callback_data="set_timezone")],
-        [InlineKeyboardButton(text="⏰ Eslatma vaqti", callback_data="set_reminder")],
-    ])
-
-
 def stats_inline() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📅 Kunlik", callback_data="stats_daily")],

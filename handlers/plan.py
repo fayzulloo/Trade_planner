@@ -20,7 +20,7 @@ async def build_plan_text(user_id: int) -> tuple[str, dict]:
     if not settings:
         return "⚠️ Sozlamalar topilmadi.", {}
 
-    day = get_current_day(settings["start_date"])
+    day = get_current_day(settings["start_date"], settings["total_days"])
     total_days = settings["total_days"]
 
     if day > total_days:
