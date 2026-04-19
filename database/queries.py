@@ -228,18 +228,24 @@ async def confirm_withdrawal(user_id: int):
         )
 
 
-async def get_journal_range(user_id: int, from_date: str, to_date: str) -> list:
-    """Faqat ish kunlarini qaytaradi (shanba/yakshanba yo'q)"""
+async def get_journal_range(user_id: int, from_date, to_date) -> list:
+    """Faqat ish kunlarini qaytaradi (shanba/yakshanba yoq)"""
+    from datetime import datetime as dt
+    def to_date_obj(d):
+        if hasattr(d, "year"): return d
+        return dt.strptime(d, "%Y-%m-%d").date() if "-" in str(d) else dt.strptime(d, "%d.%m.%Y").date()
+    from_d = to_date_obj(from_date)
+    to_d = to_date_obj(to_date)
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch("""
             SELECT * FROM daily_journal
             WHERE user_id = $1
-              AND date >= $2::date
-              AND date <= $3::date
+              AND date >= $2
+              AND date <= $3
               AND EXTRACT(DOW FROM date) NOT IN (0, 6)
             ORDER BY date ASC
-        """, user_id, from_date, to_date)
+        """, user_id, from_d, to_d)
     return [dict(r) for r in rows]
 
 
@@ -288,18 +294,24 @@ async def get_trades_by_day(user_id: int, day_number: int) -> list:
     return [dict(r) for r in rows]
 
 
-async def get_trades_range(user_id: int, from_date: str, to_date: str) -> list:
+async def get_trades_range(user_id: int, from_date, to_date) -> list:
+    from datetime import datetime as dt
+    def to_d(d):
+        if hasattr(d, "year"): return d
+        return dt.strptime(d, "%Y-%m-%d").date() if "-" in str(d) else dt.strptime(d, "%d.%m.%Y").date()
+    from_d = to_d(from_date)
+    to_d2 = to_d(to_date)
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch("""
             SELECT t.* FROM trades t
             JOIN daily_journal dj ON t.user_id = dj.user_id AND t.day_number = dj.day_number
             WHERE t.user_id = $1
-              AND dj.date >= $2::date
-              AND dj.date <= $3::date
+              AND dj.date >= $2
+              AND dj.date <= $3
               AND EXTRACT(DOW FROM dj.date) NOT IN (0, 6)
             ORDER BY t.created_at ASC
-        """, user_id, from_date, to_date)
+        """, user_id, from_d, to_d2)
     return [dict(r) for r in rows]
 
 

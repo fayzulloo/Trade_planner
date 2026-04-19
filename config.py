@@ -37,3 +37,4 @@ if DATABASE_URL.startswith("postgres://"):
 
 CHARTS_DIR = "charts"
 os.makedirs(CHARTS_DIR, exist_ok=True)
+
