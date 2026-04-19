@@ -6,7 +6,7 @@ from database.queries import (
     get_trades_by_day
 )
 from utils.calculator import (
-    calculate_day_target, get_current_day,
+    get_current_day,
     is_withdrawal_day, calculate_balance_progression
 )
 from handlers.keyboards import plan_inline, confirm_keyboard
