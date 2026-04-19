@@ -1,4 +1,4 @@
-from datetime import datetime, date 
+from datetime import datetime, date as date_type
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from database.queries import (
