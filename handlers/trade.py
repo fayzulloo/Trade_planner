@@ -1,3 +1,4 @@
+from datetime import datetime, date as date_type
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
@@ -31,6 +32,12 @@ def cancel_keyboard():
 async def trade_start(call: CallbackQuery, state: FSMContext, db_user_id: int, settings_complete: bool):
     if not settings_complete:
         await call.answer("Sozlamalar to'ldirilmagan!", show_alert=True)
+        return
+    # Sana tekshiruvi
+    settings = await get_settings(db_user_id)
+    start = datetime.strptime(settings["start_date"], "%d.%m.%Y").date()
+    if start > date_type.today():
+        await call.answer("⏳ Strategiya hali boshlanmagan!", show_alert=True)
         return
     await state.set_state(TradeForm.symbol)
     await call.message.edit_text(

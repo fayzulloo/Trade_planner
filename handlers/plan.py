@@ -1,3 +1,4 @@
+from datetime import datetime, date 
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from database.queries import (
@@ -19,7 +20,16 @@ async def build_plan_text(user_id: int) -> tuple[str, dict]:
     settings = await get_settings(user_id)
     if not settings:
         return "⚠️ Sozlamalar topilmadi.", {}
-
+    
+    start = datetime.strptime(settings["start_date"], "%d.%m.%Y").date()
+    if start > date_type.today():
+        days_left = (start - date_type.today()).days
+        return (
+            f"⏳ <b>Strategiya hali boshlanmagan</b>\n\n"
+            f"📆 Boshlanish sanasi: <b>{settings['start_date']}</b>\n"
+            f"🕐 Boshlanishiga: <b>{days_left} kun</b> qoldi",
+               {} )
+               
     day = get_current_day(settings["start_date"], settings["total_days"])
     total_days = settings["total_days"]
 
