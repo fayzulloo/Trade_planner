@@ -16,18 +16,20 @@ async def init_db():
 
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS settings (
-                id                  SERIAL PRIMARY KEY,
-                user_id             INTEGER UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                starting_balance    NUMERIC(12,2),
-                daily_profit_rate   NUMERIC(5,4) DEFAULT 0.20,
-                extra_target        NUMERIC(12,2) DEFAULT 0,
-                withdrawal_amount   NUMERIC(12,2) DEFAULT 0,
-                withdrawal_every    INTEGER DEFAULT 7,
-                total_days          INTEGER DEFAULT 7,
-                start_date          TEXT,
-                timezone            TEXT DEFAULT 'Asia/Tashkent',
-                reminder_time       TEXT DEFAULT '08:00',
-                is_active           BOOLEAN DEFAULT FALSE
+                id                    SERIAL PRIMARY KEY,
+                user_id               INTEGER UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                starting_balance      NUMERIC(12,2),
+                daily_profit_rate     NUMERIC(5,4) DEFAULT 0.20,
+                extra_target          NUMERIC(12,2) DEFAULT 0,
+                withdrawal_amount     NUMERIC(12,2) DEFAULT 0,
+                withdrawal_every      INTEGER DEFAULT 7,
+                total_days            INTEGER DEFAULT 7,
+                start_date            TEXT,
+                timezone              TEXT DEFAULT 'Asia/Tashkent',
+                reminder_time         TEXT DEFAULT '08:00',
+                evening_reminder_time TEXT DEFAULT NULL,
+                auto_complete_time    TEXT DEFAULT NULL,
+                is_active             BOOLEAN DEFAULT FALSE
             )
         """)
 
@@ -42,6 +44,8 @@ async def init_db():
                 exit_price   NUMERIC(12,5) NOT NULL,
                 quantity     NUMERIC(12,4) NOT NULL,
                 pnl          NUMERIC(12,2) NOT NULL,
+                open_time    TEXT,
+                close_time   TEXT,
                 created_at   TIMESTAMPTZ DEFAULT NOW()
             )
         """)
@@ -90,7 +94,11 @@ async def migrate_db():
         migrations = [
             "ALTER TABLE settings ADD COLUMN IF NOT EXISTS extra_target NUMERIC(12,2) DEFAULT 0",
             "ALTER TABLE settings ADD COLUMN IF NOT EXISTS reminder_time TEXT DEFAULT '08:00'",
+            "ALTER TABLE settings ADD COLUMN IF NOT EXISTS evening_reminder_time TEXT DEFAULT NULL",
+            "ALTER TABLE settings ADD COLUMN IF NOT EXISTS auto_complete_time TEXT DEFAULT NULL",
             "ALTER TABLE daily_journal ADD COLUMN IF NOT EXISTS extra_target NUMERIC(12,2) DEFAULT 0",
+            "ALTER TABLE trades ADD COLUMN IF NOT EXISTS open_time TEXT",
+            "ALTER TABLE trades ADD COLUMN IF NOT EXISTS close_time TEXT",
         ]
         for sql in migrations:
             try:

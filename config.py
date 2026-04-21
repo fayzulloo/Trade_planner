@@ -31,6 +31,9 @@ def validate_config():
 
 BOT_TOKEN, DATABASE_URL = validate_config()
 
+# Anthropic API — MT5 skrinshot tahlili uchun (ixtiyoriy)
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+
 # Railway PostgreSQL URL ni asyncpg formatiga o'tkazish
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)

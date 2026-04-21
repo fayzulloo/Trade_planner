@@ -24,6 +24,8 @@ class SettingsForm(StatesGroup):
     days = State()
     startdate = State()
     reminder = State()
+    evening_reminder = State()
+    auto_complete = State()
 
 
 def cancel_kb():
@@ -40,6 +42,10 @@ def settings_inline_kb(s: dict | None) -> InlineKeyboardMarkup:
         return v if v is not None else default
 
     rate_pct = int(float(val("daily_profit_rate", 0.20)) * 100)
+    evening = val("evening_reminder_time", None)
+    evening_text = evening if evening and evening != "—" else "Kiritilmagan"
+    auto_complete = val("auto_complete_time", None)
+    auto_text = auto_complete if auto_complete and auto_complete != "—" else "Kiritilmagan ⚠️"
 
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=f"💰 Boshlang'ich balans: {val('starting_balance')}$", callback_data="set_balance")],
@@ -50,7 +56,9 @@ def settings_inline_kb(s: dict | None) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text=f"🗓 Kun soni: {val('total_days')} kun", callback_data="set_days")],
         [InlineKeyboardButton(text=f"📆 Boshlanish: {val('start_date')}", callback_data="set_startdate")],
         [InlineKeyboardButton(text=f"🌍 Timezone: {val('timezone', 'Asia/Tashkent')}", callback_data="set_timezone")],
-        [InlineKeyboardButton(text=f"⏰ Eslatma: {val('reminder_time', '08:00')}", callback_data="set_reminder")],
+        [InlineKeyboardButton(text=f"⏰ Ertalabki eslatma: {val('reminder_time', '08:00')}", callback_data="set_reminder")],
+        [InlineKeyboardButton(text=f"🌙 Kechki eslatma: {evening_text}", callback_data="set_evening_reminder")],
+        [InlineKeyboardButton(text=f"🔄 Avtomatik yakunlash: {auto_text}", callback_data="set_auto_complete")],
         [InlineKeyboardButton(text="💾 Saqlash va yopish", callback_data="settings_save")],
     ])
 
@@ -88,13 +96,24 @@ async def settings_open(call: CallbackQuery, state: FSMContext, db_user_id: int)
 
 @router.callback_query(F.data == "settings_save")
 async def settings_save(call: CallbackQuery, db_user_id: int):
-    """Saqlash tugmasi — inline tugmalarni o'chiradi"""
+    """Saqlash tugmasi — avtomatik yakunlash majburiy"""
     s = await get_settings(db_user_id)
     if not s:
         await call.answer("⚠️ Hech narsa sozlanmagan!", show_alert=True)
         return
 
+    # Avtomatik yakunlash vaqti majburiy
+    if not s.get("auto_complete_time"):
+        await call.answer(
+            "⚠️ Avtomatik yakunlash vaqtini kiriting! (🔄 tugmasi)",
+            show_alert=True
+        )
+        return
+
     rate_pct = int(float(s.get("daily_profit_rate") or 0.20) * 100)
+    evening = s.get("evening_reminder_time")
+    auto = s.get("auto_complete_time")
+
     text = (
         "✅ <b>Sozlamalar saqlandi!</b>\n"
         "━━━━━━━━━━━━━━━\n"
@@ -106,9 +125,10 @@ async def settings_save(call: CallbackQuery, db_user_id: int):
         f"🗓 Kun soni: <b>{s.get('total_days') or '—'} kun</b>\n"
         f"📆 Boshlanish: <b>{s.get('start_date') or '—'}</b>\n"
         f"🌍 Timezone: <b>{s.get('timezone') or 'Asia/Tashkent'}</b>\n"
-        f"⏰ Eslatma: <b>{s.get('reminder_time') or '08:00'}</b>\n"
+        f"⏰ Ertalabki eslatma: <b>{s.get('reminder_time') or '08:00'}</b>\n"
+        f"🌙 Kechki eslatma: <b>{evening or 'Kiritilmagan'}</b>\n"
+        f"🔄 Avtomatik yakunlash: <b>{auto}</b>\n"
     )
-    # Inline tugmalarni o'chiramiz
     await call.message.edit_text(text, reply_markup=None, parse_mode="HTML")
     await call.answer("✅ Saqlandi!")
     logger.info(f"Sozlamalar saqlandi: user_id={db_user_id}")
@@ -352,5 +372,83 @@ async def save_reminder(message: Message, state: FSMContext, db_user_id: int):
     except ValueError:
         await message.answer(
             "⚠️ Format noto'g'ri. Qayta kiriting:\n<i>Masalan: 08:00</i>",
+            reply_markup=cancel_kb(), parse_mode="HTML"
+        )
+
+
+# ===== EVENING REMINDER =====
+@router.callback_query(F.data == "set_evening_reminder")
+async def ask_evening_reminder(call: CallbackQuery, state: FSMContext):
+    await state.set_state(SettingsForm.evening_reminder)
+    await call.message.edit_text(
+        "🌙 Kechki eslatma vaqtini kiriting:\n"
+        "<i>Format: 22:00\n"
+        "Kiritmasangiz eslatma yuborilmaydi</i>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🚫 O'chirish", callback_data="clear_evening_reminder")],
+            [InlineKeyboardButton(text="❌ Bekor qilish", callback_data="settings_open")]
+        ]),
+        parse_mode="HTML"
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data == "clear_evening_reminder")
+async def clear_evening_reminder(call: CallbackQuery, db_user_id: int):
+    await upsert_setting(db_user_id, "evening_reminder_time", None)
+    s = await get_settings(db_user_id)
+    await call.message.edit_text(
+        _settings_text(), reply_markup=settings_inline_kb(s), parse_mode="HTML"
+    )
+    await call.answer("✅ Kechki eslatma o'chirildi")
+
+
+@router.message(SettingsForm.evening_reminder)
+async def save_evening_reminder(message: Message, state: FSMContext, db_user_id: int):
+    try:
+        from datetime import datetime
+        datetime.strptime(message.text.strip(), "%H:%M")
+        await upsert_setting(db_user_id, "evening_reminder_time", message.text.strip())
+        await state.clear()
+        s = await get_settings(db_user_id)
+        await message.answer(
+            _settings_text(), reply_markup=settings_inline_kb(s), parse_mode="HTML"
+        )
+    except ValueError:
+        await message.answer(
+            "⚠️ Format noto'g'ri. Qayta kiriting:\n<i>Masalan: 22:00</i>",
+            reply_markup=cancel_kb(), parse_mode="HTML"
+        )
+
+
+# ===== AUTO COMPLETE =====
+@router.callback_query(F.data == "set_auto_complete")
+async def ask_auto_complete(call: CallbackQuery, state: FSMContext):
+    await state.set_state(SettingsForm.auto_complete)
+    await call.message.edit_text(
+        "🔄 Avtomatik yakunlash vaqtini kiriting:\n"
+        "<i>Format: 23:59\n"
+        "Har kuni shu vaqtda yakunlanmagan kunlar avtomatik yakunlanadi\n\n"
+        "⚠️ Bu maydon majburiy — sozlamalarni saqlash uchun kiritish shart!</i>",
+        reply_markup=cancel_kb(),
+        parse_mode="HTML"
+    )
+    await call.answer()
+
+
+@router.message(SettingsForm.auto_complete)
+async def save_auto_complete(message: Message, state: FSMContext, db_user_id: int):
+    try:
+        from datetime import datetime
+        datetime.strptime(message.text.strip(), "%H:%M")
+        await upsert_setting(db_user_id, "auto_complete_time", message.text.strip())
+        await state.clear()
+        s = await get_settings(db_user_id)
+        await message.answer(
+            _settings_text(), reply_markup=settings_inline_kb(s), parse_mode="HTML"
+        )
+    except ValueError:
+        await message.answer(
+            "⚠️ Format noto'g'ri. Qayta kiriting:\n<i>Masalan: 23:59</i>",
             reply_markup=cancel_kb(), parse_mode="HTML"
         )

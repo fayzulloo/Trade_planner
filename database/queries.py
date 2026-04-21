@@ -265,15 +265,18 @@ async def get_all_journals(user_id: int) -> list:
 # ===== TRADES =====
 
 async def add_trade(user_id: int, day_number: int, symbol: str, direction: str,
-                    entry: float, exit_p: float, qty: float, pnl: float) -> int:
+                    entry: float, exit_p: float, qty: float, pnl: float,
+                    open_time: str = None, close_time: str = None) -> int:
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow("""
             INSERT INTO trades
-                (user_id, day_number, symbol, direction, entry_price, exit_price, quantity, pnl)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                (user_id, day_number, symbol, direction, entry_price, exit_price,
+                 quantity, pnl, open_time, close_time)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             RETURNING id
-        """, user_id, day_number, symbol, direction, entry, exit_p, qty, pnl)
+        """, user_id, day_number, symbol, direction, entry, exit_p, qty, pnl,
+            open_time, close_time)
     logger.info(f"Savdo: user_id={user_id}, {symbol} {direction}, PnL={pnl}")
     return row["id"]
 
@@ -321,7 +324,8 @@ async def get_all_users_for_reminder_all() -> list:
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch("""
-            SELECT u.telegram_id, s.reminder_time, s.timezone
+            SELECT u.telegram_id, s.reminder_time, s.timezone,
+                   s.evening_reminder_time, s.auto_complete_time
             FROM settings s
             JOIN users u ON s.user_id = u.id
             WHERE s.is_active = TRUE

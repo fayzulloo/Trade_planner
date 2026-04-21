@@ -1,4 +1,3 @@
-from datetime import datetime, date as date_type
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from database.queries import (
@@ -20,16 +19,7 @@ async def build_plan_text(user_id: int) -> tuple[str, dict]:
     settings = await get_settings(user_id)
     if not settings:
         return "⚠️ Sozlamalar topilmadi.", {}
-    
-    start = datetime.strptime(settings["start_date"], "%d.%m.%Y").date()
-    if start > date_type.today():
-        days_left = (start - date_type.today()).days
-        return (
-            f"⏳ <b>Strategiya hali boshlanmagan</b>\n\n"
-            f"📆 Boshlanish sanasi: <b>{settings['start_date']}</b>\n"
-            f"🕐 Boshlanishiga: <b>{days_left} kun</b> qoldi",
-               {} )
-               
+
     day = get_current_day(settings["start_date"], settings["total_days"])
     total_days = settings["total_days"]
 
@@ -64,8 +54,8 @@ async def build_plan_text(user_id: int) -> tuple[str, dict]:
 
     await update_journal_pnl(user_id)
     journal = await get_today_journal(user_id)
-    actual_pnl = float(journal.get("actual_pnl") or 0) if journal else 0.0
-    remaining = round(float(total_target) - float(actual_pnl), 2)
+    actual_pnl = journal.get("actual_pnl", 0) if journal else 0
+    remaining = round(total_target - actual_pnl, 2)
 
     trades = await get_trades_by_day(user_id, day)
     trades_text = ""
