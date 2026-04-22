@@ -1,111 +1,120 @@
 import re
 import io
 import pytesseract
-from PIL import Image, ImageFilter, ImageEnhance
+from PIL import Image, ImageFilter, ImageEnhance, ImageOps
 from utils.logger import logger
-
-import shutil
-print("Tesseract path:", shutil.which("tesseract"))
+import numpy as np
 
 
-# MT5 formatiga mos regex patternlar
-# Misol: "XAUUSDc, sell 1.00"
+# ===== REGEX PATTERNS =====
+
+# "XAUUSDc, sell 1.00" — symbol vergul/boʻshliq bilan ajratilgan
 RE_HEADER = re.compile(
-    r'([A-Z]{3,10}(?:c|\.)?)\s*,?\s*(buy|sell|BUY|SELL)\s+([\d.]+)',
+    r'([A-Z]{3,10}[cC]?)\s*[,.]?\s*(buy|sell)\s+([\d.]+)',
     re.IGNORECASE
 )
 
 # Narxlar: "4 825.546 → 4 827.149" yoki "4825.546 -> 4827.149"
+# Bo'shliqli raqamlar ham: "4 825.546"
 RE_PRICES = re.compile(
-    r'([\d\s]{1,10}[\d]\.[\d]{2,5})\s*(?:→|->|>)\s*([\d\s]{1,10}[\d]\.[\d]{2,5})'
+    r'([\d][\d\s]{0,8}\.[\d]{2,5})\s*(?:→|->|»|>|—>)\s*([\d][\d\s]{0,8}\.[\d]{2,5})'
 )
 
-# PnL: "-160.30" yoki "+160.30" yoki "160.30" (qizil/yashil rangda)
-RE_PNL = re.compile(
-    r'([+-]?\s*[\d\s]+\.[\d]{2})\s*$',
-    re.MULTILINE
-)
-
-# Vaqt: "2026.04.16 03:12:00" yoki "2026.04.16 03:09:27"
+# Vaqt: "2026.04.16 03:12:00"
 RE_TIME = re.compile(
     r'(\d{4}[./]\d{2}[./]\d{2}\s+\d{2}:\d{2}:\d{2})'
 )
 
 # Savdo raqami: "#1031470841"
-RE_TICKET = re.compile(r'#(\d{6,12})')
+RE_TICKET = re.compile(r'#(\d{7,12})')
+
+# PnL — manfiy yoki musbat raqam, 2 kasr
+# "-160.30" yoki "-1 022.10" yoki "160.30"
+RE_PNL_LINE = re.compile(
+    r'^-?\s*[\d][\d\s]*\.[\d]{2}\s*$'
+)
 
 
 def _clean_number(s: str) -> float | None:
-    """Bo'shliqli raqamni float ga o'tkazish: '4 825.546' → 4825.546"""
     try:
-        cleaned = re.sub(r'\s+', '', str(s))
+        cleaned = re.sub(r'\s+', '', str(s)).replace(',', '.')
         return float(cleaned)
     except Exception:
         return None
 
 
-def _preprocess_image(image: Image.Image) -> Image.Image:
+def _preprocess_variants(image: Image.Image) -> list:
+    """
+    Turli preprocessing variantlari — hammasi sinab ko'riladi.
+    OCR uchun eng ko'p ma'lumot beradigan variant tanlanadi.
+    """
+    variants = []
     w, h = image.size
-    scale = 3
-    image = image.resize((w * scale, h * scale), Image.LANCZOS)
-    image = image.convert("L")
-    
-    # Qoʻyuq fon bo'lsa inversiya
-    import numpy as np
-    from PIL import ImageOps
-    arr = np.array(image)
+
+    # 1. Kattalashtirish + inversiya (qoʻyuq fon uchun)
+    img1 = image.resize((w * 3, h * 3), Image.LANCZOS).convert("L")
+    arr = np.array(img1)
     if arr.mean() < 128:
-        image = ImageOps.invert(image)
-    
-    enhancer = ImageEnhance.Contrast(image)
-    image = enhancer.enhance(3.0)
-    image = image.filter(ImageFilter.SHARPEN)
-    image = image.filter(ImageFilter.SHARPEN)
-    return image
+        img1 = ImageOps.invert(img1)
+    enhancer = ImageEnhance.Contrast(img1)
+    img1 = enhancer.enhance(3.0)
+    img1 = img1.filter(ImageFilter.SHARPEN)
+    img1 = img1.filter(ImageFilter.SHARPEN)
+    variants.append(img1)
+
+    # 2. Oddiy grayscale, kattalashtirish
+    img2 = image.resize((w * 2, h * 2), Image.LANCZOS).convert("L")
+    enhancer2 = ImageEnhance.Contrast(img2)
+    img2 = enhancer2.enhance(2.0)
+    variants.append(img2)
+
+    # 3. Threshold — ikki qiymatli rasm
+    img3 = image.resize((w * 3, h * 3), Image.LANCZOS).convert("L")
+    arr3 = np.array(img3)
+    if arr3.mean() < 128:
+        img3 = ImageOps.invert(img3)
+    # Manual threshold
+    threshold = 140
+    arr3 = np.array(img3)
+    arr3 = np.where(arr3 > threshold, 255, 0).astype(np.uint8)
+    img3 = Image.fromarray(arr3)
+    variants.append(img3)
+
+    return variants
 
 
 def _split_into_trade_blocks(lines: list) -> list:
-    """
-    Matnni alohida savdo bloklariga ajratish.
-    Har bir blok header bilan boshlanadi (symbol, direction, quantity).
-    """
     blocks = []
     current = []
-
     for line in lines:
         line = line.strip()
         if not line:
             continue
-        # Yangi savdo boshlanishi — header qatori
         if RE_HEADER.search(line):
             if current:
                 blocks.append(current)
             current = [line]
         elif current:
             current.append(line)
-
     if current:
         blocks.append(current)
-
     return blocks
 
 
 def _parse_trade_block(lines: list) -> dict | None:
-    """Bitta savdo blokini tahlil qilish"""
     text = "\n".join(lines)
 
-    # 1. Header: symbol, direction, quantity
+    # 1. Header
     header_match = RE_HEADER.search(text)
     if not header_match:
         return None
 
     symbol_raw = header_match.group(1).upper()
-    # XAUUSDc → XAUUSD
     symbol = re.sub(r'C$', '', symbol_raw)
     direction = header_match.group(2).upper()
     quantity = _clean_number(header_match.group(3))
 
-    # 2. Narxlar: entry → exit
+    # 2. Narxlar
     prices_match = RE_PRICES.search(text)
     entry_price = None
     exit_price = None
@@ -113,36 +122,58 @@ def _parse_trade_block(lines: list) -> dict | None:
         entry_price = _clean_number(prices_match.group(1))
         exit_price = _clean_number(prices_match.group(2))
 
+    # Agar narxlar topilmasa — raqamli qatorlardan topishga urinamiz
+    if not entry_price or not exit_price:
+        # 4 xonali raqamlar (oltin narxi 4000+ bo'ladi)
+        big_numbers = re.findall(r'(\d[\d\s]{2,8}\.\d{2,5})', text)
+        big_nums = [_clean_number(n) for n in big_numbers if _clean_number(n) and _clean_number(n) > 100]
+        if len(big_nums) >= 2:
+            entry_price = big_nums[0]
+            exit_price = big_nums[1]
+
     # 3. Vaqtlar
     times = RE_TIME.findall(text)
     open_time = None
     close_time = None
     if len(times) >= 2:
-        # Birinchi vaqt — ochilish (Открытие), ikkinchi — yopilish
-        open_time = times[1].strip()
         close_time = times[0].strip()
+        open_time = times[1].strip()
     elif len(times) == 1:
         close_time = times[0].strip()
 
-    # 4. PnL — oxirgi qatordagi katta raqam
+    # 4. PnL
     pnl = None
-    # Har bir qatorni tekshiramiz — PnL odatda alohida qatorda
-    for line in reversed(lines):
-        line = line.strip()
-        # Faqat raqam va belgilar: "-160.30" yoki "1 022.10"
-        pnl_match = re.match(r'^([+-]?\s*[\d\s]+\.[\d]{2})\s*$', line)
-        if pnl_match:
-            val = _clean_number(pnl_match.group(1))
+    # Avval ticket raqamidan keyingi qatorlarga qara
+    ticket_match = RE_TICKET.search(text)
+    after_ticket = text
+    if ticket_match:
+        after_ticket = text[ticket_match.end():]
+
+    # Oxirgi qatorlarda PnL qidirish
+    all_lines = [l.strip() for l in text.split('\n') if l.strip()]
+    for line in reversed(all_lines):
+        # PnL: "-160.30" yoki "-1 022.10"
+        m = re.match(r'^-?\s*\d[\d\s]*\.\d{2}\s*$', line)
+        if m:
+            val = _clean_number(line)
             if val is not None and abs(val) > 0.01:
+                # Narxlardan farqlash — narxlar entry/exit bilan bir xil bo'lmasin
+                if entry_price and abs(val) == entry_price:
+                    continue
+                if exit_price and abs(val) == exit_price:
+                    continue
+                # S/L yoki T/P emas
+                pnl = -abs(val) if direction == "SELL" and val > 0 else val
+                # Aslida foyda/zarar belgisi rasmda rangi bilan ko'rsatiladi
+                # OCR belgini tushirmaydi — keyinroq foydalanuvchi tuzatadi
                 pnl = val
                 break
 
-    # Agar pnl topilmasa — butun matndan qidirish
+    # Agar pnl topilmasa
     if pnl is None:
-        # Qizil rang OCR da odatda minus belgisi bilan keladi
-        all_numbers = re.findall(r'([+-][\s\d]+\.[\d]{2})', text)
-        for n in reversed(all_numbers):
-            val = _clean_number(n)
+        signed = re.findall(r'([+-]\s*\d[\d\s]*\.\d{2})', text)
+        for s in reversed(signed):
+            val = _clean_number(s)
             if val is not None and abs(val) > 0.01:
                 pnl = val
                 break
@@ -158,82 +189,68 @@ def _parse_trade_block(lines: list) -> dict | None:
             "open_time": open_time,
             "close_time": close_time,
         }
-
     return None
 
 
 async def analyze_mt5_screenshot(image_bytes: bytes) -> list | None:
-    """
-    MT5 skrinshot rasmini OCR bilan tahlil qiladi.
-    Qaytaradi: list of dicts yoki None
-    """
     try:
-        # Rasmni ochish
         image = Image.open(io.BytesIO(image_bytes))
+        variants = _preprocess_variants(image)
 
-        # Preprocessing
-        processed = _preprocess_image(image)
-
-        # OCR — MT5 qora fon, oq matn bo'lishi mumkin
-        # psm 6: bir xil bloklangan matn
-        configs = [
+        psm_configs = [
             "--psm 6 --oem 3",
             "--psm 4 --oem 3",
-            "--psm 11 --oem 3",
+            "--psm 12 --oem 3",
         ]
 
+        best_trades = []
         best_text = ""
-        best_trade_count = 0
 
-        for cfg in configs:
-            try:
-                text = pytesseract.image_to_string(processed, config=cfg, lang="eng")
-                lines = [l.strip() for l in text.split("\n") if l.strip()]
-                blocks = _split_into_trade_blocks(lines)
-                if len(blocks) > best_trade_count:
-                    best_trade_count = len(blocks)
-                    best_text = text
-            except Exception as e:
-                logger.warning(f"OCR config {cfg} xatosi: {e}")
-                continue
+        for img_variant in variants:
+            for cfg in psm_configs:
+                try:
+                    text = pytesseract.image_to_string(
+                        img_variant, config=cfg, lang="eng"
+                    )
+                    if not text.strip():
+                        continue
 
-        if not best_text:
-            logger.error("OCR hech narsa o'qimadi")
+                    lines = [l.strip() for l in text.split("\n") if l.strip()]
+                    blocks = _split_into_trade_blocks(lines)
+
+                    # Blok topilmasa — butun matn bitta blok
+                    if not blocks and lines:
+                        blocks = [lines]
+
+                    trades = []
+                    for block in blocks:
+                        trade = _parse_trade_block(block)
+                        if trade:
+                            trades.append(trade)
+
+                    if len(trades) > len(best_trades):
+                        best_trades = trades
+                        best_text = text
+
+                except Exception as e:
+                    logger.warning(f"OCR variant xatosi ({cfg}): {e}")
+                    continue
+
+        # OCR natijasini log ga yozamiz — debug uchun
+        if best_text:
+            # Faqat birinchi 500 belgini logga yozamiz
+            logger.warning(f"OCR raw text (500 belgi):\n{best_text[:500]}")
+        else:
+            logger.warning("OCR hech narsa o'qimadi — rasm sifatini tekshiring")
             return None
 
-        lines = [l.strip() for l in best_text.split("\n") if l.strip()]
-        logger.debug(f"OCR natijasi:\n{best_text}")
-
-        # Savdo bloklariga ajratish
-        blocks = _split_into_trade_blocks(lines)
-
-        if not blocks:
-            # Blok topilmasa — butun matnni bitta blok sifatida
-            blocks = [lines]
-
-        trades = []
-        for block in blocks:
-            trade = _parse_trade_block(block)
-            if trade:
-                trades.append(trade)
-
-        if not trades:
-            logger.warning("Savdo ma'lumotlari topilmadi")
+        if not best_trades:
+            logger.warning(f"Savdo ma'lumotlari topilmadi. OCR matni:\n{best_text[:300]}")
             return None
 
-        logger.info(f"OCR tahlil: {len(trades)} ta savdo aniqlandi")
-        return trades
+        logger.info(f"OCR muvaffaqiyat: {len(best_trades)} ta savdo")
+        return best_trades
 
     except Exception as e:
         logger.error(f"MT5 OCR xatosi: {e}")
-        return None
-
-
-def _safe_float(val) -> float | None:
-    try:
-        if val is None:
-            return None
-        s = str(val).replace(" ", "").replace(",", ".")
-        return float(s)
-    except Exception:
         return None
