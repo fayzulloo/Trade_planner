@@ -7,8 +7,6 @@ from utils.logger import logger
 import shutil
 print("Tesseract path:", shutil.which("tesseract"))
 
-pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"
-
 
 # MT5 formatiga mos regex patternlar
 # Misol: "XAUUSDc, sell 1.00"
