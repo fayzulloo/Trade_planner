@@ -300,13 +300,6 @@ async def handle_mt5_screenshot(message: Message, state: FSMContext,
             await message.answer("⏳ Strategiya hali boshlanmagan!", parse_mode="HTML")
             return
 
-    from config import ANTHROPIC_API_KEY
-    if not ANTHROPIC_API_KEY:
-        await message.answer(
-            "⚠️ ANTHROPIC_API_KEY sozlanmagan.", parse_mode="HTML"
-        )
-        return
-
     wait_msg = await message.answer("🔍 Skrinshot tahlil qilinmoqda...")
 
     try:
@@ -316,7 +309,9 @@ async def handle_mt5_screenshot(message: Message, state: FSMContext,
         image_bytes = file_bytes.read()
 
         from utils.mt5_analyzer import analyze_mt5_screenshot
-        trades = await analyze_mt5_screenshot(image_bytes)
+        import asyncio
+        loop = asyncio.get_event_loop()
+        trades = await loop.run_in_executor(None, _analyze_sync, image_bytes)
 
         await wait_msg.delete()
 
