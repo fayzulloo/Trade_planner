@@ -4,7 +4,8 @@ import pytesseract
 from PIL import Image, ImageFilter, ImageEnhance
 from utils.logger import logger
 
-import pytesseract
+import shutil
+print("Tesseract path:", shutil.which("tesseract"))
 
 pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"
 
