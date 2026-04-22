@@ -309,9 +309,7 @@ async def handle_mt5_screenshot(message: Message, state: FSMContext,
         image_bytes = file_bytes.read()
 
         from utils.mt5_analyzer import analyze_mt5_screenshot
-        import asyncio
-        loop = asyncio.get_event_loop()
-        trades = await loop.run_in_executor(None, analyze_mt5_screenshot, image_bytes)
+        trades = await analyze_mt5_screenshot(image_bytes)
 
         await wait_msg.delete()
 
