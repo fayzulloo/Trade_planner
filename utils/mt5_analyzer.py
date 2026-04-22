@@ -45,22 +45,22 @@ def _clean_number(s: str) -> float | None:
 
 
 def _preprocess_image(image: Image.Image) -> Image.Image:
-    """Rasmni OCR uchun tayyorlash"""
-    # Kattalashtirish — aniqlik oshadi
     w, h = image.size
-    scale = 2
+    scale = 3
     image = image.resize((w * scale, h * scale), Image.LANCZOS)
-
-    # Grayscale
     image = image.convert("L")
-
-    # Kontrast oshirish
+    
+    # Qoʻyuq fon bo'lsa inversiya
+    import numpy as np
+    from PIL import ImageOps
+    arr = np.array(image)
+    if arr.mean() < 128:
+        image = ImageOps.invert(image)
+    
     enhancer = ImageEnhance.Contrast(image)
-    image = enhancer.enhance(2.0)
-
-    # O'tkir qilish
+    image = enhancer.enhance(3.0)
     image = image.filter(ImageFilter.SHARPEN)
-
+    image = image.filter(ImageFilter.SHARPEN)
     return image
 
 
