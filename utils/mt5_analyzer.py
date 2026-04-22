@@ -4,6 +4,10 @@ import pytesseract
 from PIL import Image, ImageFilter, ImageEnhance
 from utils.logger import logger
 
+import pytesseract
+
+pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"
+
 
 # MT5 formatiga mos regex patternlar
 # Misol: "XAUUSDc, sell 1.00"
