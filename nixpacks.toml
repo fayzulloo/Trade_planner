@@ -1,5 +1,5 @@
 [phases.setup]
-nixPkgs = ["tesseract", "tesseract-lang", "which"]
+nixPkgs = ["tesseract", "tesseract-data-eng", "which"]
 
 [phases.install]
 cmds = [
