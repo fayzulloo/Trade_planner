@@ -23,11 +23,11 @@ from utils.logger import logger
 # ============================================================
 
 GEMINI_MODELS = [
-    "gemini-3-flash-preview",
     "gemini-2.5-flash-lite",
-    "gemini-flash-latest",
     "gemini-3.1-flash-lite-preview",
     "gemini-2.5-flash",
+    "gemini-flash-latest",
+    "gemini-3-flash-preview",
 ]
 
 MAX_RETRIES = 3  # Xato bo'lganda nechta model sinab ko'riladi
