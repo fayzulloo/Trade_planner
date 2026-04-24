@@ -31,14 +31,10 @@ def validate_config():
 
 BOT_TOKEN, DATABASE_URL = validate_config()
 
-# Railway PostgreSQL URL ni asyncpg formatiga o'tkazish
+# Railway PostgreSQL URL formatini tuzatish
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
-# Railway PostgreSQL URL ni asyncpg formatiga o'tkazish
-if DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 CHARTS_DIR = "charts"
 os.makedirs(CHARTS_DIR, exist_ok=True)
-

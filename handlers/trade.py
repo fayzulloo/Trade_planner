@@ -45,6 +45,9 @@ async def trade_start(call: CallbackQuery, state: FSMContext, db_user_id: int, s
 
 @router.message(TradeForm.symbol)
 async def trade_symbol(message: Message, state: FSMContext):
+    if not message.text:
+        await message.answer("⚠️ Iltimos matn kiriting:", reply_markup=cancel_keyboard(), parse_mode="HTML")
+        return
     symbol = message.text.strip().upper()
     if len(symbol) < 3 or len(symbol) > 10:
         await message.answer(
@@ -83,6 +86,9 @@ async def trade_direction(call: CallbackQuery, state: FSMContext):
 
 @router.message(TradeForm.entry)
 async def trade_entry(message: Message, state: FSMContext):
+    if not message.text:
+        await message.answer("⚠️ Raqam kiriting:", reply_markup=cancel_keyboard(), parse_mode="HTML")
+        return
     try:
         entry = float(message.text.replace(",", "."))
         if entry <= 0:
@@ -102,6 +108,9 @@ async def trade_entry(message: Message, state: FSMContext):
 
 @router.message(TradeForm.exit_price)
 async def trade_exit(message: Message, state: FSMContext):
+    if not message.text:
+        await message.answer("⚠️ Raqam kiriting:", reply_markup=cancel_keyboard(), parse_mode="HTML")
+        return
     try:
         exit_p = float(message.text.replace(",", "."))
         if exit_p <= 0:
@@ -224,9 +233,19 @@ class MT5EditForm(StatesGroup):
 
 
 def _trade_text(idx: int, t: dict) -> str:
-    pnl = t.get("pnl", 0) or 0
-    sign = "+" if pnl >= 0 else ""
-    emoji = "🟢" if pnl >= 0 else "🔴"
+    pnl = t.get("pnl")
+    pnl_sign = t.get("pnl_sign", 1)  # +1 foyda, -1 zarar
+
+    if pnl is not None:
+        display_pnl = abs(float(pnl)) * pnl_sign
+        sign_str = "+" if display_pnl >= 0 else ""
+        pnl_str = f"{sign_str}{display_pnl:.2f}$"
+        emoji = "🟢" if display_pnl >= 0 else "🔴"
+    else:
+        # PnL topilmadi — pnl_sign dan foydalanib ko'rsatamiz
+        emoji = "🟢" if pnl_sign >= 0 else "🔴"
+        pnl_str = "Noma'lum (tahrirlang)"
+
     return (
         f"<b>{idx + 1}. {t.get('symbol', '?')} {t.get('direction', '?')} "
         f"{t.get('quantity', '?')} lot</b>\n"
@@ -234,7 +253,7 @@ def _trade_text(idx: int, t: dict) -> str:
         f"   📤 Chiqish: <b>{t.get('exit_price', '?')}</b>\n"
         f"   🕐 Ochilgan: <b>{t.get('open_time') or '—'}</b>\n"
         f"   🕑 Yopilgan: <b>{t.get('close_time') or '—'}</b>\n"
-        f"   {emoji} PnL: <b>{sign}{pnl}$</b>"
+        f"   {emoji} PnL: <b>{pnl_str}</b>"
     )
 
 
@@ -243,7 +262,7 @@ def _mt5_confirm_kb(trades: list) -> "InlineKeyboardMarkup":
     rows = []
     for i, t in enumerate(trades):
         rows.append([InlineKeyboardButton(
-            text=f"✏️ {i+1}. {t.get('symbol','?')} {t.get('direction','?')} | {'+' if (t.get('pnl') or 0) >= 0 else ''}{t.get('pnl', 0)}$",
+            text=f"✏️ {i+1}. {t.get('symbol','?')} {t.get('direction','?')} | {'🟢' if t.get('pnl_sign',1)>=0 else '🔴'} {abs(float(t.get('pnl') or 0)):.2f}$",
             callback_data=f"mt5_edit_{i}"
         )])
     rows.append([
@@ -468,8 +487,21 @@ async def mt5_save_all(call: CallbackQuery, state: FSMContext, db_user_id: int):
 
     saved = 0
     errors = 0
+    total_pnl = 0.0
+
     for t in trades:
         try:
+            # pnl_sign dan foydalanib to'g'ri PnL hisoblash
+            pnl_raw = t.get("pnl")
+            pnl_sign = t.get("pnl_sign", 1)
+
+            if pnl_raw is not None:
+                pnl_final = abs(float(pnl_raw)) * pnl_sign
+            else:
+                # PnL kiritilmagan — 0 saqlaymiz, foydalanuvchi keyinroq tuzatadi
+                pnl_final = 0.0
+                logger.warning(f"PnL topilmadi: {t.get('symbol')} {t.get('direction')}")
+
             await add_trade(
                 user_id=db_user_id,
                 day_number=day,
@@ -477,19 +509,19 @@ async def mt5_save_all(call: CallbackQuery, state: FSMContext, db_user_id: int):
                 direction=t["direction"],
                 entry=float(t["entry_price"]),
                 exit_p=float(t["exit_price"]),
-                qty=float(t["quantity"]),
-                pnl=float(t["pnl"]),
+                qty=float(t.get("quantity") or 1.0),
+                pnl=round(pnl_final, 2),
                 open_time=t.get("open_time"),
                 close_time=t.get("close_time"),
             )
+            total_pnl += pnl_final
             saved += 1
         except Exception as e:
-            logger.error(f"Savdo saqlashda xato: {e}")
+            logger.error(f"Savdo saqlashda xato: {e}, trade: {t}")
             errors += 1
 
     await update_journal_pnl(db_user_id)
 
-    total_pnl = sum(float(t.get("pnl") or 0) for t in trades)
     sign = "+" if total_pnl >= 0 else ""
     emoji = "🟢" if total_pnl >= 0 else "🔴"
 

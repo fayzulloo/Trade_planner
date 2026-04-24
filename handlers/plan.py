@@ -54,8 +54,8 @@ async def build_plan_text(user_id: int) -> tuple[str, dict]:
 
     await update_journal_pnl(user_id)
     journal = await get_today_journal(user_id)
-    actual_pnl = float(journal.get("actual_pnl") or 0) if journal else 0.0
-    remaining = round(float(total_target) - float(actual_pnl), 2)
+    actual_pnl = journal.get("actual_pnl", 0) if journal else 0
+    remaining = round(total_target - actual_pnl, 2)
 
     trades = await get_trades_by_day(user_id, day)
     trades_text = ""
