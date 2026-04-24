@@ -36,5 +36,8 @@ if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 
+# Gemini API — MT5 skrinshot tahlili uchun (ixtiyoriy)
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+
 CHARTS_DIR = "charts"
 os.makedirs(CHARTS_DIR, exist_ok=True)

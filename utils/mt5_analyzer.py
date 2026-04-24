@@ -1,72 +1,102 @@
 """
 MT5 yopilgan savdolar skrinshot tahlilchisi.
-Faqat pytesseract va PIL ishlatiladi — tashqi API kerak emas.
+Gemini API + Round-robin + Fallback (3 urinish).
 
-MT5 format (oq fon, qora/qizil/ko'k matn):
-  Qator 1: XAUUSDc, sell 1.00          2026.04.16 03:12:00
-  Qator 2: 4 825.546 → 4 827.149                  -160.30
-  Qator 3: #1031470841    Открытие2026.04.16 03:09:27
-  Qator 4: S/L: —         Своп:                     0.00
-  Qator 5: T/P: —         Комиссия:                 0.00
+Modellar tartibi (global round-robin):
+  1. gemini-3-flash-preview
+  2. gemini-2.5-flash-lite
+  3. gemini-flash-latest
+  4. gemini-3.1-flash-lite-preview
+  5. gemini-2.5-flash
+
+Har bir skrinshot navbatdagi modelga boradi.
+Xato bo'lsa o'sha modeldan boshlab 3 ta model sinab ko'riladi.
 """
 
-import re
-import io
-import pytesseract
-from PIL import Image, ImageFilter, ImageEnhance
+import base64
+import json
+import aiohttp
 from utils.logger import logger
 
-
 # ============================================================
-# REGEX PATTERNS
-# ============================================================
-
-# Savdo header: "XAUUSDc, sell 1.00" yoki "XAUUSD, buy 0.15"
-# Oxiridagi vaqt ham shu qatorda bo'lishi mumkin
-RE_HEADER = re.compile(
-    r'\b([A-Z]{3,8}c?)\s*[,.]?\s*(buy|sell)\s+([\d.]+)',
-    re.IGNORECASE
-)
-
-# Narxlar: "4 825.546 → 4 827.149"
-# Arrow turli ko'rinishda kelishi mumkin: →, ->, —, -, >
-RE_PRICES = re.compile(
-    r'([\d][\d ]{0,6}\.[\d]{2,5})\s*(?:→|->|—|–|-+|>)\s*([\d][\d ]{0,6}\.[\d]{2,5})'
-)
-
-# Sana-vaqt: "2026.04.16 03:12:00" yoki "2026/04/16 03:12:00"
-RE_DATETIME = re.compile(
-    r'(\d{4}[./]\d{2}[./]\d{2}\s+\d{2}:\d{2}:\d{2})'
-)
-
-# Ticket raqami: "#1031470841"
-RE_TICKET = re.compile(r'#\d{6,12}')
-
-# S/L yoki T/P qatori — bu qatorlarni o'tkazib yuboramiz
-RE_SKIP = re.compile(r'^\s*[ST][/\\][LP]', re.IGNORECASE)
-
-# Своп, Комиссия qatorlari
-RE_SKIP2 = re.compile(r'(своп|комисс|commission|swap)', re.IGNORECASE)
-
-
-# ============================================================
-# YORDAMCHI FUNKSIYALAR
+# MODELLAR VA GLOBAL HOLAT
 # ============================================================
 
-def _to_float(s: str) -> float | None:
-    """Bo'shliqli va vergülli raqamni float ga o'tkazish."""
-    try:
-        cleaned = re.sub(r'\s+', '', str(s)).replace(',', '.')
-        return float(cleaned)
-    except Exception:
-        return None
+GEMINI_MODELS = [
+    "gemini-3-flash-preview",
+    "gemini-2.5-flash-lite",
+    "gemini-flash-latest",
+    "gemini-3.1-flash-lite-preview",
+    "gemini-2.5-flash",
+]
 
+MAX_RETRIES = 3  # Xato bo'lganda nechta model sinab ko'riladi
+
+# Global model indeksi — barcha foydalanuvchilar uchun bitta
+_current_model_idx = 0
+
+
+def _get_next_model() -> tuple[str, int]:
+    """
+    Navbatdagi modelni qaytaradi va indeksni oldinga siljitadi.
+    Qaytaradi: (model_name, used_idx)
+    """
+    global _current_model_idx
+    idx = _current_model_idx
+    _current_model_idx = (_current_model_idx + 1) % len(GEMINI_MODELS)
+    return GEMINI_MODELS[idx], idx
+
+
+def _model_at(idx: int) -> str:
+    return GEMINI_MODELS[idx % len(GEMINI_MODELS)]
+
+
+# ============================================================
+# PROMPT
+# ============================================================
+
+PROMPT = """Bu MT5 (MetaTrader 5) trading platformasining yopilgan savdolar ekrani.
+Rasmda bir yoki bir nechta savdo bo'lishi mumkin.
+
+Har bir savdo uchun quyidagi ma'lumotlarni o'qib, FAQAT JSON array formatida qaytaring:
+
+[
+  {
+    "symbol": "juft nomi (XAUUSDc bo'lsa XAUUSD deb yoz, oxiridagi c ni olib tashla)",
+    "direction": "BUY yoki SELL",
+    "entry_price": kirish narxi raqam (bo'shliqsiz: 4825.546),
+    "exit_price": chiqish narxi raqam (bo'shliqsiz: 4827.149),
+    "quantity": lot miqdori raqam,
+    "pnl_abs": PnL ning mutlaq qiymati (faqat musbat raqam: 160.30),
+    "open_time": "ochilish vaqti: 2026.04.16 02:49:47",
+    "close_time": "yopilish vaqti: 2026.04.16 03:12:00",
+    "order_id": "savdo raqami # belgisiz: 1031470841",
+    "swap": svop qiymati raqam (masalan: -2.07 yoki 0.00),
+    "commission": komissiya qiymati raqam (masalan: 0.00)
+  }
+]
+
+Muhim qoidalar:
+- Faqat JSON array qaytaring, hech qanday izoh yoki markdown yozmang
+- Narxlardagi bo'shliqlarni olib tashlang: 4 825.546 → 4825.546
+- pnl_abs FAQAT musbat raqam: 160.30 (belgisiz)
+- direction faqat BUY yoki SELL
+- order_id dan # belgisini olib tashla
+- swap va commission manfiy bo'lishi mumkin
+- Biron maydon ko'rinmasa null yozing"""
+
+
+# ============================================================
+# PNL BELGISI HISOBLASH
+# ============================================================
 
 def _calc_pnl_sign(direction: str, entry: float, exit_p: float) -> int:
     """
-    PnL belgi hisoblash.
-    SELL: exit < entry → +1 (foyda), exit > entry → -1 (zarar)
-    BUY:  exit > entry → +1 (foyda), exit < entry → -1 (zarar)
+    PnL belgisini narxlardan hisoblaydi.
+    SELL: exit < entry → +1 (foyda)
+    SELL: exit > entry → -1 (zarar)
+    BUY:  exit > entry → +1 (foyda)
+    BUY:  exit < entry → -1 (zarar)
     """
     if direction == "SELL":
         return 1 if exit_p < entry else -1
@@ -74,248 +104,220 @@ def _calc_pnl_sign(direction: str, entry: float, exit_p: float) -> int:
         return 1 if exit_p > entry else -1
 
 
-def _strip_symbol(raw: str) -> str:
-    """XAUUSDc → XAUUSD, EURUSD → EURUSD."""
-    s = raw.upper().strip()
-    if s.endswith('C') and len(s) > 4:
-        s = s[:-1]
-    return s
-
-
 # ============================================================
-# IMAGE PREPROCESSING
+# RESPONSE PARSING
 # ============================================================
 
-def _preprocess(image: Image.Image) -> list:
-    """
-    Turli preprocessing variantlari qaytaradi.
-    MT5 oq fon, qora matn — inversiya kerak emas.
-    """
-    results = []
-    w, h = image.size
-
-    # Variant 1: 3x zoom, kontrast oshirish
-    img = image.resize((w * 3, h * 3), Image.LANCZOS).convert("L")
-    img = ImageEnhance.Contrast(img).enhance(2.5)
-    img = img.filter(ImageFilter.SHARPEN)
-    img = img.filter(ImageFilter.SHARPEN)
-    results.append(img)
-
-    # Variant 2: 2x zoom, yumshoqroq
-    img2 = image.resize((w * 2, h * 2), Image.LANCZOS).convert("L")
-    img2 = ImageEnhance.Contrast(img2).enhance(2.0)
-    results.append(img2)
-
-    # Variant 3: 3x zoom, threshold
-    img3 = image.resize((w * 3, h * 3), Image.LANCZOS).convert("L")
-    import numpy as np
-    arr = np.array(img3)
-    arr = np.where(arr > 160, 255, 0).astype(np.uint8)
-    results.append(Image.fromarray(arr))
-
-    return results
-
-
-# ============================================================
-# OCR
-# ============================================================
-
-def _run_ocr(image: Image.Image) -> str:
-    """
-    Bir rasm uchun eng yaxshi OCR natijasini qaytaradi.
-    Bir nechta PSM rejimini sinab, eng uzun natijani tanlaydi.
-    """
-    variants = _preprocess(image)
-    psm_modes = ["--psm 6 --oem 3", "--psm 4 --oem 3", "--psm 12 --oem 3"]
-
-    best = ""
-    for img_v in variants:
-        for psm in psm_modes:
-            try:
-                text = pytesseract.image_to_string(img_v, config=psm, lang="eng+rus")
-                if len(text) > len(best):
-                    best = text
-            except Exception as e:
-                logger.warning(f"OCR xatosi ({psm}): {e}")
-    return best
-
-
-# ============================================================
-# PARSING
-# ============================================================
-
-def _clean_lines(raw_text: str) -> list[str]:
-    """Matnni qatorlarga ajratadi, bo'sh va keraksizlarini o'chiradi."""
-    lines = []
-    for line in raw_text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        if RE_SKIP.match(line):
-            continue
-        if RE_SKIP2.search(line):
-            continue
-        lines.append(line)
-    return lines
-
-
-def _split_blocks(lines: list[str]) -> list[list[str]]:
-    """
-    Qatorlarni savdo bloklariga ajratadi.
-    Har bir blok header (symbol+direction) bilan boshlanadi.
-    """
-    blocks = []
-    current = []
-
-    for line in lines:
-        if RE_HEADER.search(line):
-            if current:
-                blocks.append(current)
-            current = [line]
-        elif current:
-            current.append(line)
-
-    if current:
-        blocks.append(current)
-
-    return blocks
-
-
-def _parse_block(lines: list[str]) -> dict | None:
-    """
-    Bitta savdo blokini tahlil qiladi.
-    Qaytaradi: dict yoki None (agar muhim maydonlar topilmasa).
-    """
-    full_text = "\n".join(lines)
-
-    # 1. Header: symbol, direction, quantity
-    hm = RE_HEADER.search(full_text)
-    if not hm:
+def _safe_float(val) -> float | None:
+    try:
+        if val is None:
+            return None
+        return float(str(val).replace(" ", "").replace(",", "."))
+    except Exception:
         return None
 
-    symbol = _strip_symbol(hm.group(1))
-    direction = hm.group(2).upper()
-    quantity = _to_float(hm.group(3))
 
-    # 2. Narxlar: entry → exit
-    pm = RE_PRICES.search(full_text)
-    if not pm:
-        logger.debug(f"Narxlar topilmadi: {full_text[:80]}")
+def _parse_response(raw: str) -> list | None:
+    """Gemini javobidan savdolar ro'yxatini ajratib oladi."""
+    raw = raw.strip()
+    raw = raw.replace("```json", "").replace("```", "").strip()
+
+    try:
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            data = [data]
+        if not isinstance(data, list) or not data:
+            return None
+
+        result = []
+        for t in data:
+            symbol = str(t.get("symbol") or "").upper().strip()
+            if symbol.endswith("C") and len(symbol) > 4:
+                symbol = symbol[:-1]
+
+            direction = str(t.get("direction") or "").upper().strip()
+            if direction not in ("BUY", "SELL"):
+                logger.warning(f"Noto'g'ri direction: {direction}")
+                continue
+
+            entry = _safe_float(t.get("entry_price"))
+            exit_p = _safe_float(t.get("exit_price"))
+
+            if not symbol or not entry or not exit_p:
+                logger.warning(f"Majburiy maydonlar yo'q: {t}")
+                continue
+
+            # PnL belgisini narxlardan hisoblaymiz
+            pnl_sign = _calc_pnl_sign(direction, entry, exit_p)
+            pnl_abs = _safe_float(t.get("pnl_abs"))
+            pnl = round(abs(pnl_abs) * pnl_sign, 2) if pnl_abs is not None else None
+
+            # order_id dan # belgisini tozalash
+            order_id_raw = str(t.get("order_id") or "").strip()
+            order_id = order_id_raw.lstrip("#").strip() or None
+
+            result.append({
+                "symbol": symbol,
+                "direction": direction,
+                "entry_price": entry,
+                "exit_price": exit_p,
+                "quantity": _safe_float(t.get("quantity")),
+                "pnl": pnl,
+                "pnl_sign": pnl_sign,
+                "open_time": str(t.get("open_time") or "").strip() or None,
+                "close_time": str(t.get("close_time") or "").strip() or None,
+                "order_id": order_id,
+                "swap": _safe_float(t.get("swap")) or 0.0,
+                "commission": _safe_float(t.get("commission")) or 0.0,
+            })
+
+        return result if result else None
+
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON parse xatosi: {e} | Raw: {raw[:200]}")
         return None
 
-    entry_price = _to_float(pm.group(1))
-    exit_price = _to_float(pm.group(2))
 
-    if not entry_price or not exit_price:
-        return None
+# ============================================================
+# GEMINI API CALL
+# ============================================================
 
-    # Narxlar bir xil bo'lsa yoki juda kichik bo'lsa — xato
-    if abs(entry_price - exit_price) < 0.001:
-        return None
-
-    # 3. Vaqtlar
-    # Header qatoridagi vaqt — yopilish vaqti (close_time)
-    header_line = lines[0] if lines else ""
-    header_times = RE_DATETIME.findall(header_line)
-    close_time = header_times[0].strip() if header_times else None
-
-    # "Открытие" bilan birikib kelgan ochilish vaqti
-    open_time = None
-    for line in lines:
-        # "Открытие2026.04.16 03:09:27" → "2026.04.16 03:09:27"
-        # OCR "Открытие" ni turli yo'l bilan o'qishi mumkin
-        # Shuning uchun barcha datetime ni qidirib, close_time dan farqlisini olamiz
-        dts = RE_DATETIME.findall(line)
-        for dt in dts:
-            dt = dt.strip()
-            if dt != close_time:
-                open_time = dt
-                break
-        if open_time:
-            break
-
-    # Agar open_time topilmasa — barcha vaqtlardan ikkinchisini olishga urinamiz
-    if not open_time:
-        all_times = RE_DATETIME.findall(full_text)
-        all_times = [t.strip() for t in all_times]
-        # Birinchisi close_time, ikkinchisi open_time
-        for t in all_times:
-            if t != close_time:
-                open_time = t
-                break
-
-    # 4. PnL belgisini hisoblash (rangsiz, faqat narxlardan)
-    sign = _calc_pnl_sign(direction, entry_price, exit_price)
-
-    # 5. PnL qiymatini ham o'qishga urinamiz (ixtiyoriy)
-    # Agar topilsa — sign bilan tasdiqlash
-    pnl = None
-    for line in reversed(lines):
-        # Faqat raqamdan iborat qator: "160.30" yoki "757.20" yoki "-160.30"
-        m = re.match(r'^-?\s*[\d][\d\s]*\.[\d]{2}\s*$', line)
-        if m:
-            val = _to_float(line)
-            if val and abs(val) > 0.01:
-                # Narxlardan farqlash
-                if abs(val) not in (abs(entry_price), abs(exit_price)):
-                    # Sign ni narxlardan hisoblab tasdiqlash
-                    pnl = abs(val) * sign
-                    break
-
-    # PnL topilmasa None qoladi — foydalanuvchi o'zi kiritadi
-    return {
-        "symbol": symbol,
-        "direction": direction,
-        "entry_price": entry_price,
-        "exit_price": exit_price,
-        "quantity": quantity,
-        "pnl": round(pnl, 2) if pnl is not None else None,
-        "pnl_sign": sign,  # +1 yoki -1 — UI uchun
-        "open_time": open_time,
-        "close_time": close_time,
+async def _call_gemini(
+    session: aiohttp.ClientSession,
+    api_key: str,
+    model: str,
+    image_b64: str,
+    mime_type: str
+) -> tuple[list | None, str]:
+    """
+    Bitta modelga so'rov yuboradi.
+    Qaytaradi: (trades | None, status)
+    status: "ok" | "limit" | "not_found" | "forbidden" | "error"
+    """
+    url = (
+        f"https://generativelanguage.googleapis.com/v1beta"
+        f"/models/{model}:generateContent?key={api_key}"
+    )
+    payload = {
+        "contents": [{
+            "parts": [
+                {"inline_data": {"mime_type": mime_type, "data": image_b64}},
+                {"text": PROMPT}
+            ]
+        }],
+        "generationConfig": {
+            "maxOutputTokens": 2048,
+            "temperature": 0
+        }
     }
+
+    try:
+        async with session.post(
+            url, json=payload,
+            timeout=aiohttp.ClientTimeout(total=30)
+        ) as resp:
+
+            if resp.status == 200:
+                data = await resp.json()
+                try:
+                    raw = data["candidates"][0]["content"]["parts"][0]["text"]
+                except (KeyError, IndexError) as e:
+                    logger.error(f"[{model}] Javob strukturasi noto'g'ri: {e}")
+                    return None, "error"
+
+                trades = _parse_response(raw)
+                if trades:
+                    logger.info(f"[{model}] ✅ {len(trades)} ta savdo aniqlandi")
+                    return trades, "ok"
+                else:
+                    logger.warning(f"[{model}] Savdo topilmadi")
+                    return None, "parse_error"
+
+            elif resp.status == 429:
+                logger.warning(f"[{model}] ⚠️ Limit tugadi")
+                return None, "limit"
+
+            elif resp.status == 404:
+                logger.warning(f"[{model}] ❌ Model topilmadi")
+                return None, "not_found"
+
+            elif resp.status == 403:
+                logger.warning(f"[{model}] 🚫 Ruxsat yo'q")
+                return None, "forbidden"
+
+            else:
+                body = await resp.text()
+                logger.error(f"[{model}] HTTP {resp.status}: {body[:150]}")
+                return None, "error"
+
+    except aiohttp.ClientConnectorError:
+        logger.error(f"[{model}] Ulanish xatosi")
+        return None, "error"
+    except aiohttp.ServerTimeoutError:
+        logger.error(f"[{model}] Timeout")
+        return None, "error"
+    except Exception as e:
+        logger.error(f"[{model}] Kutilmagan xato: {e}")
+        return None, "error"
 
 
 # ============================================================
 # ASOSIY FUNKSIYA
 # ============================================================
 
-async def analyze_mt5_screenshot(image_bytes: bytes) -> list | None:
+async def analyze_mt5_screenshot(image_bytes: bytes) -> tuple[list | None, bool]:
     """
-    MT5 yopilgan savdolar skrinshtini tahlil qiladi.
-    Qaytaradi: list of trade dicts yoki None.
+    MT5 skrinshot tahlili.
+    Round-robin + fallback (max 3 urinish xato bo'lganda).
+
+    Qaytaradi: (trades | None, need_wait)
+      - trades: savdolar ro'yxati yoki None
+      - need_wait: True bo'lsa foydalanuvchiga "kuting" xabari chiqadi
     """
-    try:
-        image = Image.open(io.BytesIO(image_bytes))
-        raw_text = _run_ocr(image)
+    from config import GEMINI_API_KEY
+    if not GEMINI_API_KEY:
+        logger.error("GEMINI_API_KEY topilmadi!")
+        return None, False
 
-        if not raw_text.strip():
-            logger.warning("OCR hech narsa o'qimadi")
-            return None
+    # Rasm formatini aniqlash
+    if image_bytes[:4] == b'\x89PNG':
+        mime_type = "image/png"
+    else:
+        mime_type = "image/jpeg"
 
-        # Debug uchun dastlabki 400 belgini log qilamiz
-        logger.warning(f"OCR raw (400 belgi):\n{raw_text[:400]}")
+    image_b64 = base64.standard_b64encode(image_bytes).decode("utf-8")
 
-        lines = _clean_lines(raw_text)
-        blocks = _split_blocks(lines)
+    # Navbatdagi modelni olish (round-robin)
+    start_model, start_idx = _get_next_model()
+    logger.info(f"Boshlang'ich model: [{start_idx}] {start_model}")
 
-        # Blok topilmasa — barcha qatorlarni bitta blok sifatida sinab ko'ramiz
-        if not blocks and lines:
-            blocks = [lines]
+    async with aiohttp.ClientSession() as session:
+        # 1-urinish: navbatdagi model
+        trades, status = await _call_gemini(
+            session, GEMINI_API_KEY, start_model, image_b64, mime_type
+        )
 
-        trades = []
-        for block in blocks:
-            trade = _parse_block(block)
-            if trade:
-                trades.append(trade)
+        if status == "ok":
+            return trades, False
 
-        if not trades:
-            logger.warning("Savdo bloklari topilmadi")
-            return None
+        # Xato bo'ldi — qolgan 2 ta model sinab ko'ramiz
+        logger.warning(f"[{start_model}] xato ({status}), fallback boshlanmoqda...")
 
-        logger.info(f"Tahlil yakunlandi: {len(trades)} ta savdo")
-        return trades
+        for attempt in range(1, MAX_RETRIES):
+            fallback_idx = (start_idx + attempt) % len(GEMINI_MODELS)
+            fallback_model = GEMINI_MODELS[fallback_idx]
 
-    except Exception as e:
-        logger.error(f"MT5 analyzer xatosi: {e}", exc_info=True)
-        return None
+            logger.info(f"Fallback {attempt}/{MAX_RETRIES - 1}: [{fallback_idx}] {fallback_model}")
+
+            trades, status = await _call_gemini(
+                session, GEMINI_API_KEY, fallback_model, image_b64, mime_type
+            )
+
+            if status == "ok":
+                return trades, False
+
+            logger.warning(f"[{fallback_model}] xato ({status})")
+
+    # Barcha 3 ta model muvaffaqiyatsiz
+    logger.error("3 ta model ham muvaffaqiyatsiz tugadi")
+    return None, True  # need_wait=True

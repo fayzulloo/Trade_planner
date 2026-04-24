@@ -266,18 +266,20 @@ async def get_all_journals(user_id: int) -> list:
 
 async def add_trade(user_id: int, day_number: int, symbol: str, direction: str,
                     entry: float, exit_p: float, qty: float, pnl: float,
-                    open_time: str = None, close_time: str = None) -> int:
+                    open_time: str = None, close_time: str = None,
+                    order_id: str = None, swap: float = 0.0,
+                    commission: float = 0.0, broker: str = None) -> int:
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow("""
             INSERT INTO trades
                 (user_id, day_number, symbol, direction, entry_price, exit_price,
-                 quantity, pnl, open_time, close_time)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                 quantity, pnl, open_time, close_time, order_id, swap, commission, broker)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
             RETURNING id
         """, user_id, day_number, symbol, direction, entry, exit_p, qty, pnl,
-            open_time, close_time)
-    logger.info(f"Savdo: user_id={user_id}, {symbol} {direction}, PnL={pnl}")
+            open_time, close_time, order_id, swap or 0.0, commission or 0.0, broker)
+    logger.info(f"Savdo: user_id={user_id}, {symbol} {direction}, PnL={pnl}, order={order_id}")
     return row["id"]
 
 

@@ -26,6 +26,7 @@ class SettingsForm(StatesGroup):
     reminder = State()
     evening_reminder = State()
     auto_complete = State()
+    broker = State()
 
 
 def cancel_kb():
@@ -59,6 +60,7 @@ def settings_inline_kb(s: dict | None) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text=f"⏰ Ertalabki eslatma: {val('reminder_time', '08:00')}", callback_data="set_reminder")],
         [InlineKeyboardButton(text=f"🌙 Kechki eslatma: {evening_text}", callback_data="set_evening_reminder")],
         [InlineKeyboardButton(text=f"🔄 Avtomatik yakunlash: {auto_text}", callback_data="set_auto_complete")],
+        [InlineKeyboardButton(text=f"🏦 Broker: {val('broker_name', 'Kiritilmagan')}", callback_data="set_broker")],
         [InlineKeyboardButton(text="💾 Saqlash va yopish", callback_data="settings_save")],
     ])
 
@@ -128,6 +130,7 @@ async def settings_save(call: CallbackQuery, db_user_id: int):
         f"⏰ Ertalabki eslatma: <b>{s.get('reminder_time') or '08:00'}</b>\n"
         f"🌙 Kechki eslatma: <b>{evening or 'Kiritilmagan'}</b>\n"
         f"🔄 Avtomatik yakunlash: <b>{auto}</b>\n"
+        f"🏦 Broker: <b>{s.get('broker_name') or 'Kiritilmagan'}</b>\n"
     )
     await call.message.edit_text(text, reply_markup=None, parse_mode="HTML")
     await call.answer("✅ Saqlandi!")
@@ -452,3 +455,47 @@ async def save_auto_complete(message: Message, state: FSMContext, db_user_id: in
             "⚠️ Format noto'g'ri. Qayta kiriting:\n<i>Masalan: 23:59</i>",
             reply_markup=cancel_kb(), parse_mode="HTML"
         )
+
+
+# ===== BROKER =====
+@router.callback_query(F.data == "set_broker")
+async def ask_broker(call: CallbackQuery, state: FSMContext):
+    await state.set_state(SettingsForm.broker)
+    await call.message.edit_text(
+        "🏦 Broker nomini kiriting:\n"
+        "<i>Masalan: Exness, RoboForex, Alpari\n"
+        "Ixtiyoriy — bo'sh qoldirish mumkin</i>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🚫 O'chirish", callback_data="clear_broker")],
+            [InlineKeyboardButton(text="❌ Bekor qilish", callback_data="settings_open")]
+        ]),
+        parse_mode="HTML"
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data == "clear_broker")
+async def clear_broker(call: CallbackQuery, db_user_id: int):
+    await upsert_setting(db_user_id, "broker_name", None)
+    s = await get_settings(db_user_id)
+    await call.message.edit_text(
+        _settings_text(), reply_markup=settings_inline_kb(s), parse_mode="HTML"
+    )
+    await call.answer("✅ Broker o'chirildi")
+
+
+@router.message(SettingsForm.broker)
+async def save_broker(message: Message, state: FSMContext, db_user_id: int):
+    if not message.text:
+        await message.answer("⚠️ Matn kiriting:", reply_markup=cancel_kb(), parse_mode="HTML")
+        return
+    broker = message.text.strip()
+    if len(broker) > 50:
+        await message.answer("⚠️ Broker nomi 50 belgidan oshmasin:", reply_markup=cancel_kb(), parse_mode="HTML")
+        return
+    await upsert_setting(db_user_id, "broker_name", broker)
+    await state.clear()
+    s = await get_settings(db_user_id)
+    await message.answer(
+        _settings_text(), reply_markup=settings_inline_kb(s), parse_mode="HTML"
+    )

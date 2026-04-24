@@ -29,6 +29,7 @@ async def init_db():
                 reminder_time         TEXT DEFAULT '08:00',
                 evening_reminder_time TEXT DEFAULT NULL,
                 auto_complete_time    TEXT DEFAULT NULL,
+                broker_name           TEXT DEFAULT NULL,
                 is_active             BOOLEAN DEFAULT FALSE
             )
         """)
@@ -46,6 +47,10 @@ async def init_db():
                 pnl          NUMERIC(12,2) NOT NULL,
                 open_time    TEXT,
                 close_time   TEXT,
+                order_id     TEXT,
+                swap         NUMERIC(12,2) DEFAULT 0,
+                commission   NUMERIC(12,2) DEFAULT 0,
+                broker       TEXT,
                 created_at   TIMESTAMPTZ DEFAULT NOW()
             )
         """)
@@ -99,6 +104,11 @@ async def migrate_db():
             "ALTER TABLE daily_journal ADD COLUMN IF NOT EXISTS extra_target NUMERIC(12,2) DEFAULT 0",
             "ALTER TABLE trades ADD COLUMN IF NOT EXISTS open_time TEXT",
             "ALTER TABLE trades ADD COLUMN IF NOT EXISTS close_time TEXT",
+            "ALTER TABLE trades ADD COLUMN IF NOT EXISTS order_id TEXT",
+            "ALTER TABLE trades ADD COLUMN IF NOT EXISTS swap NUMERIC(12,2) DEFAULT 0",
+            "ALTER TABLE trades ADD COLUMN IF NOT EXISTS commission NUMERIC(12,2) DEFAULT 0",
+            "ALTER TABLE trades ADD COLUMN IF NOT EXISTS broker TEXT",
+            "ALTER TABLE settings ADD COLUMN IF NOT EXISTS broker_name TEXT DEFAULT NULL",
         ]
         for sql in migrations:
             try:

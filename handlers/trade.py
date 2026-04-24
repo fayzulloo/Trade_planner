@@ -246,15 +246,23 @@ def _trade_text(idx: int, t: dict) -> str:
         emoji = "🟢" if pnl_sign >= 0 else "🔴"
         pnl_str = "Noma'lum (tahrirlang)"
 
-    return (
+    swap = float(t.get("swap") or 0)
+    commission = float(t.get("commission") or 0)
+    order_id = t.get("order_id")
+
+    text = (
         f"<b>{idx + 1}. {t.get('symbol', '?')} {t.get('direction', '?')} "
         f"{t.get('quantity', '?')} lot</b>\n"
         f"   📥 Kirish: <b>{t.get('entry_price', '?')}</b>\n"
         f"   📤 Chiqish: <b>{t.get('exit_price', '?')}</b>\n"
         f"   🕐 Ochilgan: <b>{t.get('open_time') or '—'}</b>\n"
         f"   🕑 Yopilgan: <b>{t.get('close_time') or '—'}</b>\n"
-        f"   {emoji} PnL: <b>{pnl_str}</b>"
+        f"   {emoji} PnL: <b>{pnl_str}</b>\n"
+        f"   💱 Svop: <b>{swap}</b> | Komissiya: <b>{commission}</b>"
     )
+    if order_id:
+        text += f"\n   🔖 Order: <b>#{order_id}</b>"
+    return text
 
 
 def _mt5_confirm_kb(trades: list) -> "InlineKeyboardMarkup":
@@ -328,17 +336,30 @@ async def handle_mt5_screenshot(message: Message, state: FSMContext,
         image_bytes = file_bytes.read()
 
         from utils.mt5_analyzer import analyze_mt5_screenshot
-        trades = await analyze_mt5_screenshot(image_bytes)
+        trades, need_wait = await analyze_mt5_screenshot(image_bytes)
 
         await wait_msg.delete()
 
         if not trades:
-            await message.answer(
-                "❌ Skrinshot tahlil qilinmadi.\n\n"
-                "MT5 yopilgan savdolar ekranini yuboring yoki "
-                "savdoni qo'lda kiriting.",
-                parse_mode="HTML"
-            )
+            if need_wait:
+                await message.answer(
+                    "⏳ <b>Barcha modellar vaqtincha band.</b>
+
+"
+                    "Biroz kuting va qayta urinib ko'ring.
+"
+                    "Yoki savdoni qo'lda kiriting: <b>📊 Bugungi reja → 📝 Savdo kiriting</b>",
+                    parse_mode="HTML"
+                )
+            else:
+                await message.answer(
+                    "❌ Skrinshot tahlil qilinmadi.
+
+"
+                    "MT5 yopilgan savdolar ekranini yuboring yoki "
+                    "savdoni qo'lda kiriting.",
+                    parse_mode="HTML"
+                )
             return
 
         # Noma'lum maydonlarni tekshirish
@@ -502,6 +523,9 @@ async def mt5_save_all(call: CallbackQuery, state: FSMContext, db_user_id: int):
                 pnl_final = 0.0
                 logger.warning(f"PnL topilmadi: {t.get('symbol')} {t.get('direction')}")
 
+            # Broker sozlamalardan olinadi
+            broker = settings.get("broker_name") or None
+
             await add_trade(
                 user_id=db_user_id,
                 day_number=day,
@@ -513,6 +537,10 @@ async def mt5_save_all(call: CallbackQuery, state: FSMContext, db_user_id: int):
                 pnl=round(pnl_final, 2),
                 open_time=t.get("open_time"),
                 close_time=t.get("close_time"),
+                order_id=t.get("order_id"),
+                swap=float(t.get("swap") or 0),
+                commission=float(t.get("commission") or 0),
+                broker=broker,
             )
             total_pnl += pnl_final
             saved += 1
