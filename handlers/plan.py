@@ -54,7 +54,12 @@ async def build_plan_text(user_id: int) -> tuple[str, dict]:
 
     await update_journal_pnl(user_id)
     journal = await get_today_journal(user_id)
-    actual_pnl = journal.get("actual_pnl", 0) if journal else 0
+    actual_pnl = float(journal.get("actual_pnl") or 0) if journal else 0.0
+    total_target = float(total_target)
+    start_balance = float(start_balance)
+    profit_target = float(profit_target)
+    extra_target = float(extra_target)
+    withdrawal = float(withdrawal)
     remaining = round(total_target - actual_pnl, 2)
 
     trades = await get_trades_by_day(user_id, day)
@@ -62,9 +67,10 @@ async def build_plan_text(user_id: int) -> tuple[str, dict]:
     if trades:
         trades_text = "\n\n📋 <b>Bugungi savdolar:</b>\n"
         for t in trades:
-            sign = "+" if t["pnl"] >= 0 else ""
-            emoji = "🟢" if t["pnl"] >= 0 else "🔴"
-            trades_text += f"{emoji} {t['symbol']} {t['direction']} → {sign}{t['pnl']}$\n"
+            pnl_val = float(t["pnl"] or 0)
+            sign = "+" if pnl_val >= 0 else ""
+            emoji = "🟢" if pnl_val >= 0 else "🔴"
+            trades_text += f"{emoji} {t['symbol']} {t['direction']} → {sign}{pnl_val}$\n"
 
     pnl_emoji = "🟢" if actual_pnl >= 0 else "🔴"
     rem_emoji = "✅" if remaining <= 0 else "⏳"

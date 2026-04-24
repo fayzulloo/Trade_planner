@@ -50,6 +50,8 @@ def _journal_summary(journals: list, title: str) -> str:
         _safe_float(j.get("target_profit")) + _safe_float(j.get("extra_target"))
         for j in journals
     )
+    total_target = float(total_target)
+    total_pnl = float(total_pnl)
     performance = round(total_pnl / total_target * 100, 1) if total_target else 0
     pnl_emoji = "🟢" if total_pnl >= 0 else "🔴"
     sign = "+" if total_pnl >= 0 else ""

@@ -345,7 +345,6 @@ async def handle_mt5_screenshot(message: Message, state: FSMContext,
                 await message.answer(
                     "⏳ <b>Barcha modellar vaqtincha band.</b>"
 
-
                     "Biroz kuting va qayta urinib ko'ring."
 
                     "Yoki savdoni qo'lda kiriting: <b>📊 Bugungi reja → 📝 Savdo kiriting</b>",
