@@ -37,6 +37,21 @@ app.mount("/static", StaticFiles(directory="webapp/static"), name="static")
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 
 
+@app.on_event("startup")
+async def startup():
+    """Ishga tushganda PostgreSQL pool yaratadi"""
+    from database.connection import init_pool
+    await init_pool()
+    logger.info("WebApp: PostgreSQL pool tayyor.")
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    from database.connection import close_pool
+    await close_pool()
+    logger.info("WebApp: PostgreSQL pool yopildi.")
+
+
 def verify_telegram_data(init_data: str) -> dict | None:
     """Telegram WebApp init_data ni tekshiradi"""
     try:
