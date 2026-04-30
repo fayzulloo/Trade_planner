@@ -64,29 +64,26 @@ Har bir savdo uchun quyidagi ma'lumotlarni o'qib, FAQAT JSON array formatida qay
   {
     "symbol": "juft nomi (XAUUSDc bo'lsa XAUUSD deb yoz, oxiridagi c ni olib tashla)",
     "direction": "BUY yoki SELL",
-    "entry_price": kirish narxi raqam (bo'shliqsiz: 4825.546),
-    "exit_price": chiqish narxi raqam (bo'shliqsiz: 4827.149),
+    "entry_price": kirish narxi raqam,
+    "exit_price": chiqish narxi raqam,
     "quantity": lot miqdori raqam,
-    "pnl_abs": PnL ning mutlaq qiymati (faqat musbat raqam: 160.30),
+    "pnl_abs": PnL ning mutlaq qiymati (masalan: 160.30 yoki -160.30),
     "open_time": "ochilish vaqti: 2026.04.16 02:49:47",
     "close_time": "yopilish vaqti: 2026.04.16 03:12:00",
     "order_id": "savdo raqami # belgisiz: 1031470841",
-    "swap": svop qiymati raqam (masalan: -2.07 yoki 0.00),
-    "commission": komissiya qiymati raqam (masalan: 0.00)
+    "swap": svop qiymati raqami,
+    "commission": komissiya qiymati raqami
   }
 ]
 
 Muhim qoidalar:
 - Faqat JSON array qaytaring, hech qanday izoh yoki markdown yozmang
 - Narxlardagi bo'shliqlarni olib tashlang: 4 825.546 → 4825.546
-- pnl_abs FAQAT musbat raqam: 160.30 (belgisiz)
+- pnl_abs musbat yoki manfiy raqam: 160.30 yoki -160.30
 - direction faqat BUY yoki SELL
 - order_id dan # belgisini olib tashla
-- swap va commission manfiy bo'lishi mumkin
+- swap va commission manfiy yoki musbat bo'lishi mumkin
 - Biron maydon ko'rinmasa null yozing"""
-
-
-# PnL belgisi Gemini tomonidan o'qiladi — formula ishlatilmaydi
 
 
 # ============================================================
@@ -192,7 +189,7 @@ async def _call_gemini(
             ]
         }],
         "generationConfig": {
-            "maxOutputTokens": 2048,
+            "maxOutputTokens": 4096,
             "temperature": 0
         }
     }
