@@ -234,16 +234,14 @@ class MT5EditForm(StatesGroup):
 
 def _trade_text(idx: int, t: dict) -> str:
     pnl = t.get("pnl")
-    pnl_sign = t.get("pnl_sign", 1)  # +1 foyda, -1 zarar
 
     if pnl is not None:
-        display_pnl = abs(float(pnl)) * pnl_sign
-        sign_str = "+" if display_pnl >= 0 else ""
-        pnl_str = f"{sign_str}{display_pnl:.2f}$"
-        emoji = "🟢" if display_pnl >= 0 else "🔴"
+        pnl_val = float(pnl)
+        sign_str = "+" if pnl_val >= 0 else ""
+        pnl_str = f"{sign_str}{pnl_val:.2f}$"
+        emoji = "🟢" if pnl_val >= 0 else "🔴"
     else:
-        # PnL topilmadi — pnl_sign dan foydalanib ko'rsatamiz
-        emoji = "🟢" if pnl_sign >= 0 else "🔴"
+        emoji = "❓"
         pnl_str = "Noma'lum (tahrirlang)"
 
     swap = float(t.get("swap") or 0)
@@ -270,7 +268,7 @@ def _mt5_confirm_kb(trades: list) -> "InlineKeyboardMarkup":
     rows = []
     for i, t in enumerate(trades):
         rows.append([InlineKeyboardButton(
-            text=f"✏️ {i+1}. {t.get('symbol','?')} {t.get('direction','?')} | {'🟢' if t.get('pnl_sign',1)>=0 else '🔴'} {abs(float(t.get('pnl') or 0)):.2f}$",
+            text=f"✏️ {i+1}. {t.get('symbol','?')} {t.get('direction','?')} | {'🟢' if float(t.get('pnl') or 0)>=0 else '🔴'} {float(t.get('pnl') or 0):.2f}$",
             callback_data=f"mt5_edit_{i}"
         )])
     rows.append([
@@ -343,17 +341,19 @@ async def handle_mt5_screenshot(message: Message, state: FSMContext,
         if not trades:
             if need_wait:
                 await message.answer(
-                    "⏳ <b>Barcha modellar vaqtincha band.</b>"
+                    "⏳ <b>Barcha modellar vaqtincha band.</b>
 
-                    "Biroz kuting va qayta urinib ko'ring."
-
+"
+                    "Biroz kuting va qayta urinib ko'ring.
+"
                     "Yoki savdoni qo'lda kiriting: <b>📊 Bugungi reja → 📝 Savdo kiriting</b>",
                     parse_mode="HTML"
                 )
             else:
                 await message.answer(
-                    "❌ Skrinshot tahlil qilinmadi."
-                    
+                    "❌ Skrinshot tahlil qilinmadi.
+
+"
                     "MT5 yopilgan savdolar ekranini yuboring yoki "
                     "savdoni qo'lda kiriting.",
                     parse_mode="HTML"
@@ -510,14 +510,11 @@ async def mt5_save_all(call: CallbackQuery, state: FSMContext, db_user_id: int):
 
     for t in trades:
         try:
-            # pnl_sign dan foydalanib to'g'ri PnL hisoblash
+            # PnL Gemini dan keladi — to'g'ridan-to'g'ri ishlatiladi
             pnl_raw = t.get("pnl")
-            pnl_sign = t.get("pnl_sign", 1)
-
             if pnl_raw is not None:
-                pnl_final = abs(float(pnl_raw)) * pnl_sign
+                pnl_final = float(pnl_raw)
             else:
-                # PnL kiritilmagan — 0 saqlaymiz, foydalanuvchi keyinroq tuzatadi
                 pnl_final = 0.0
                 logger.warning(f"PnL topilmadi: {t.get('symbol')} {t.get('direction')}")
 

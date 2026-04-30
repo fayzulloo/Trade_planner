@@ -61,6 +61,7 @@ def settings_inline_kb(s: dict | None) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text=f"🌙 Kechki eslatma: {evening_text}", callback_data="set_evening_reminder")],
         [InlineKeyboardButton(text=f"🔄 Avtomatik yakunlash: {auto_text}", callback_data="set_auto_complete")],
         [InlineKeyboardButton(text=f"🏦 Broker: {val('broker_name', 'Kiritilmagan')}", callback_data="set_broker")],
+        [InlineKeyboardButton(text="🗓 Dam olish kunlari", callback_data="set_rest_days")],
         [InlineKeyboardButton(text="💾 Saqlash va yopish", callback_data="settings_save")],
     ])
 
@@ -131,6 +132,7 @@ async def settings_save(call: CallbackQuery, db_user_id: int):
         f"🌙 Kechki eslatma: <b>{evening or 'Kiritilmagan'}</b>\n"
         f"🔄 Avtomatik yakunlash: <b>{auto}</b>\n"
         f"🏦 Broker: <b>{s.get('broker_name') or 'Kiritilmagan'}</b>\n"
+        f"🗓 Dam olish: <b>{_format_rest_days(s.get('rest_days', '6,7'))}</b>\n"
     )
     await call.message.edit_text(text, reply_markup=None, parse_mode="HTML")
     await call.answer("✅ Saqlandi!")
@@ -499,3 +501,86 @@ async def save_broker(message: Message, state: FSMContext, db_user_id: int):
     await message.answer(
         _settings_text(), reply_markup=settings_inline_kb(s), parse_mode="HTML"
     )
+
+
+# ===== YORDAMCHI =====
+def _format_rest_days(rest_days_str: str) -> str:
+    DAY_NAMES = {
+        "1": "Du", "2": "Se", "3": "Cho",
+        "4": "Pa", "5": "Ju", "6": "Sha", "7": "Ya"
+    }
+    if not rest_days_str:
+        return "Yo'q"
+    days = [DAY_NAMES.get(d.strip(), d.strip()) for d in rest_days_str.split(",")]
+    return ", ".join(days)
+
+
+# ===== REST DAYS =====
+DAY_BUTTONS = [
+    ("1", "Du"), ("2", "Se"), ("3", "Cho"),
+    ("4", "Pa"), ("5", "Ju"), ("6", "Sha"), ("7", "Ya")
+]
+
+
+def _rest_days_kb(selected: set) -> InlineKeyboardMarkup:
+    rows = []
+    row = []
+    for code, name in DAY_BUTTONS:
+        mark = "✅" if code in selected else "☐"
+        row.append(InlineKeyboardButton(
+            text=f"{mark} {name}",
+            callback_data=f"rd_toggle_{code}"
+        ))
+        if len(row) == 4:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([
+        InlineKeyboardButton(text="💾 Saqlash", callback_data="rd_save"),
+        InlineKeyboardButton(text="❌ Bekor", callback_data="settings_open")
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.callback_query(F.data == "set_rest_days")
+async def ask_rest_days(call: CallbackQuery, state: FSMContext, db_user_id: int):
+    s = await get_settings(db_user_id)
+    rest_str = s.get("rest_days", "6,7") if s else "6,7"
+    selected = set(rest_str.split(",")) if rest_str else {"6", "7"}
+    await state.update_data(rest_selected=list(selected))
+    await call.message.edit_text(
+        "🗓 <b>Dam olish kunlarini tanlang:</b>\n"
+        "Bosing — qo'shiladi/olib tashlanadi",
+        reply_markup=_rest_days_kb(selected),
+        parse_mode="HTML"
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("rd_toggle_"))
+async def toggle_rest_day(call: CallbackQuery, state: FSMContext):
+    code = call.data.split("_")[2]
+    data = await state.get_data()
+    selected = set(data.get("rest_selected", ["6", "7"]))
+    if code in selected:
+        selected.discard(code)
+    else:
+        selected.add(code)
+    await state.update_data(rest_selected=list(selected))
+    await call.message.edit_reply_markup(reply_markup=_rest_days_kb(selected))
+    await call.answer()
+
+
+@router.callback_query(F.data == "rd_save")
+async def save_rest_days(call: CallbackQuery, state: FSMContext, db_user_id: int):
+    data = await state.get_data()
+    selected = sorted(data.get("rest_selected", ["6", "7"]))
+    rest_str = ",".join(selected)
+    await upsert_setting(db_user_id, "rest_days", rest_str)
+    await state.clear()
+    s = await get_settings(db_user_id)
+    await call.message.edit_text(
+        _settings_text(), reply_markup=settings_inline_kb(s), parse_mode="HTML"
+    )
+    await call.answer(f"✅ Dam olish kunlari saqlandi: {_format_rest_days(rest_str)}")

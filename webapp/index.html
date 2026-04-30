@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#0a0a0f">
+<title>Trade Planner</title>
+<link rel="stylesheet" href="/static/css/style.css">
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="header">
+  <div class="header-logo">Trade Planner</div>
+  <div class="header-badge" id="header-badge">●  loading</div>
+</div>
+
+<!-- TABS -->
+<div class="tabs">
+  <button class="tab active" data-page="page-overview">Overview</button>
+  <button class="tab" data-page="page-stats">Statistika</button>
+  <button class="tab" data-page="page-chart">Grafik</button>
+</div>
+
+<!-- PAGE: OVERVIEW -->
+<div class="page active" id="page-overview">
+  <div id="overview-content">
+    <div class="loading">
+      <div class="spinner"></div>
+      Yuklanmoqda...
+    </div>
+  </div>
+</div>
+
+<!-- PAGE: STATS -->
+<div class="page" id="page-stats">
+  <div class="period-tabs">
+    <button class="period-tab" data-period="daily">Bugun</button>
+    <button class="period-tab" data-period="weekly">Hafta</button>
+    <button class="period-tab" data-period="monthly">Oy</button>
+    <button class="period-tab active" data-period="strategy">Strategiya</button>
+  </div>
+  <div id="stats-content">
+    <div class="loading">
+      <div class="spinner"></div>
+      Yuklanmoqda...
+    </div>
+  </div>
+</div>
+
+<!-- PAGE: CHART -->
+<div class="page" id="page-chart">
+  <div id="chart-content">
+    <div class="loading">
+      <div class="spinner"></div>
+      Yuklanmoqda...
+    </div>
+  </div>
+</div>
+
+<script src="/static/js/app.js"></script>
+<script>
+  // Header badge yangilash
+  async function updateBadge() {
+    try {
+      const data = await apiFetch('/api/summary');
+      const d = document.getElementById('header-badge');
+      const days = data.summary.completed_days;
+      const total = data.summary.total_days;
+      d.textContent = `● ${days}/${total} kun`;
+      d.style.color = 'var(--green)';
+    } catch(e) {
+      document.getElementById('header-badge').textContent = '● offline';
+    }
+  }
+  document.addEventListener('DOMContentLoaded', () => {
+    setTimeout(updateBadge, 500);
+  });
+</script>
+</body>
+</html>

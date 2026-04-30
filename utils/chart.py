@@ -79,7 +79,16 @@ def generate_pnl_chart(journals: list, title: str = "PnL") -> str | None:
         x = list(range(len(dates)))
         bar_colors = ["#4ade80" if p >= 0 else "#f87171" for p in pnls]
 
-        bars = ax.bar(x, pnls, color=bar_colors, alpha=0.85, zorder=3, width=0.6)
+        # Rollover kunlar to'q sariq rang
+        final_colors = []
+        for i, (p, j) in enumerate(zip(pnls, journals)):
+            if j.get("is_rolled_over"):
+                final_colors.append("#f59e0b")  # to'q sariq — rollover
+            elif p >= 0:
+                final_colors.append("#4ade80")  # yashil — foyda
+            else:
+                final_colors.append("#f87171")  # qizil — zarar
+        bars = ax.bar(x, pnls, color=final_colors, alpha=0.85, zorder=3, width=0.6)
         ax.plot(x, targets, color="#fbbf24", linewidth=2, linestyle="--",
                 marker="o", markersize=4, label="Maqsad", zorder=4)
         ax.axhline(y=0, color="#666", linewidth=0.8)
@@ -92,9 +101,10 @@ def generate_pnl_chart(journals: list, title: str = "PnL") -> str | None:
 
         green_patch = mpatches.Patch(color="#4ade80", label="Foyda")
         red_patch = mpatches.Patch(color="#f87171", label="Zarar")
+        rollover_patch = mpatches.Patch(color="#f59e0b", label="Rollover")
         target_line = plt.Line2D([0], [0], color="#fbbf24", linestyle="--",
                                   linewidth=2, label="Maqsad")
-        ax.legend(handles=[green_patch, red_patch, target_line],
+        ax.legend(handles=[green_patch, red_patch, rollover_patch, target_line],
                   facecolor="#1a1a2e", edgecolor="#444", labelcolor="#ccc", fontsize=9)
 
         for bar, pnl in zip(bars, pnls):

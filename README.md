@@ -1,54 +1,74 @@
 # Trade Planner Bot
 
-Forex trading jurnali va strategiya kuzatuvchi Telegram bot.
-PostgreSQL ma'lumotlar bazasi bilan.
+Forex trading jurnali va strategiya kuzatuvchi Telegram bot + WebApp.
 
-## Ishga tushirish (Railway)
+## Xususiyatlar
 
-1. GitHub ga push qiling
-2. Railway da yangi loyiha yarating
-3. PostgreSQL plugin qo'shing
-4. Variables ga qo'shing:
-   - `BOT_TOKEN` = telegram bot tokeningiz
-   - `DATABASE_URL` = Railway avtomatik beradi
+- 📊 Kunlik reja, haqiqiy balans, rollover
+- 📝 Savdo kiritish (qo'lda + MT5 skrinshot AI tahlil)
+- 📈 Statistika va interaktiv grafiklar (WebApp)
+- ⚙️ To'liq sozlamalar: foiz, yechish, dam olish kunlari, broker
+- 🔔 Ertalabki/kechki eslatmalar, avtomatik yakunlash
 
-## Local ishga tushirish
+## Railway da deploy
 
-```bash
-pip install -r requirements.txt
-cp .env.example .env
-# .env ga BOT_TOKEN va DATABASE_URL kiriting
-python main.py
+### 1. Bot service
+```
+BOT_TOKEN=...
+DATABASE_URL=...
+GEMINI_API_KEY=...
+WEBAPP_URL=https://your-webapp.railway.app
+```
+`Procfile`:
+```
+worker: python main.py
+```
+
+### 2. WebApp service (alohida Railway service)
+```
+DATABASE_URL=...  (bir xil PostgreSQL)
+BOT_TOKEN=...
+PORT=8000  (Railway avtomatik beradi)
+```
+`Procfile`:
+```
+web: python webapp_server.py
 ```
 
 ## Loyiha strukturasi
 
 ```
 trade_planner/
-├── main.py                 # Asosiy fayl
-├── config.py               # Config va validation
-├── Procfile                # Railway uchun
-├── runtime.txt             # Python versiyasi
-├── requirements.txt
+├── main.py
+├── config.py
+├── webapp_server.py
+├── Dockerfile
 ├── handlers/
-│   ├── keyboards.py        # Barcha tugmalar
-│   ├── start.py            # /start
-│   ├── plan.py             # Bugungi reja
-│   ├── trade.py            # Savdo kiritish
-│   ├── settings.py         # Sozlamalar
-│   └── stats.py            # Statistika
+│   ├── keyboards.py
+│   ├── start.py
+│   ├── plan.py
+│   ├── trade.py
+│   ├── settings.py
+│   └── stats.py
 ├── database/
-│   ├── connection.py       # PostgreSQL pool
-│   ├── models.py           # Jadvallar
-│   └── queries.py          # Barcha SQL
+│   ├── connection.py
+│   ├── models.py
+│   └── queries.py
 ├── scheduler/
-│   ├── scheduler.py        # APScheduler
-│   └── jobs.py             # Eslatma funksiyalari
+│   ├── scheduler.py
+│   └── jobs.py
 ├── middlewares/
-│   ├── auth.py             # Foydalanuvchi tekshiruvi
-│   └── throttle.py         # Spam himoya
-└── utils/
-    ├── logger.py           # Logging
-    ├── calculator.py       # Strategiya hisoblash
-    └── chart.py            # Grafik yaratish
+│   ├── auth.py
+│   └── throttle.py
+├── utils/
+│   ├── logger.py
+│   ├── calculator.py
+│   ├── chart.py
+│   └── mt5_analyzer.py
+└── webapp/
+    ├── app.py
+    ├── index.html
+    └── static/
+        ├── css/style.css
+        └── js/app.js
 ```

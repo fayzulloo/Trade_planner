@@ -23,11 +23,11 @@ from utils.logger import logger
 # ============================================================
 
 GEMINI_MODELS = [
+    "gemini-3-flash-preview",
     "gemini-2.5-flash-lite",
+    "gemini-flash-latest",
     "gemini-3.1-flash-lite-preview",
     "gemini-2.5-flash",
-    "gemini-flash-latest",
-    "gemini-3-flash-preview",
 ]
 
 MAX_RETRIES = 3  # Xato bo'lganda nechta model sinab ko'riladi
@@ -86,22 +86,7 @@ Muhim qoidalar:
 - Biron maydon ko'rinmasa null yozing"""
 
 
-# ============================================================
-# PNL BELGISI HISOBLASH
-# ============================================================
-
-def _calc_pnl_sign(direction: str, entry: float, exit_p: float) -> int:
-    """
-    PnL belgisini narxlardan hisoblaydi.
-    SELL: exit < entry → +1 (foyda)
-    SELL: exit > entry → -1 (zarar)
-    BUY:  exit > entry → +1 (foyda)
-    BUY:  exit < entry → -1 (zarar)
-    """
-    if direction == "SELL":
-        return 1 if exit_p < entry else -1
-    else:  # BUY
-        return 1 if exit_p > entry else -1
+# PnL belgisi Gemini tomonidan o'qiladi — formula ishlatilmaydi
 
 
 # ============================================================
@@ -147,10 +132,12 @@ def _parse_response(raw: str) -> list | None:
                 logger.warning(f"Majburiy maydonlar yo'q: {t}")
                 continue
 
-            # PnL belgisini narxlardan hisoblaymiz
-            pnl_sign = _calc_pnl_sign(direction, entry, exit_p)
+            # PnL Gemini dan keladi — pnl_abs musbat, rang orqali belgi aniqlanadi
+            # Gemini promptida qizil=manfiy, yashil/ko'k=musbat deb ko'rsatilgan
             pnl_abs = _safe_float(t.get("pnl_abs"))
-            pnl = round(abs(pnl_abs) * pnl_sign, 2) if pnl_abs is not None else None
+            # pnl_sign: Gemini agar to'g'ri o'qisa — pnl_abs ni to'g'ri belgisi bilan yuboradi
+            # Biz pnl_abs ni saqlаymiz, trade.py da foydalanuvchi tasdiqlaydi
+            pnl = pnl_abs  # musbat qiymat — foydalanuvchi ko'radi va tasdiqlaydi
 
             # order_id dan # belgisini tozalash
             order_id_raw = str(t.get("order_id") or "").strip()
@@ -163,7 +150,6 @@ def _parse_response(raw: str) -> list | None:
                 "exit_price": exit_p,
                 "quantity": _safe_float(t.get("quantity")),
                 "pnl": pnl,
-                "pnl_sign": pnl_sign,
                 "open_time": str(t.get("open_time") or "").strip() or None,
                 "close_time": str(t.get("close_time") or "").strip() or None,
                 "order_id": order_id,

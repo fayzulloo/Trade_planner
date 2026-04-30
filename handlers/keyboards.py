@@ -1,7 +1,11 @@
 from aiogram.types import (
     ReplyKeyboardMarkup, KeyboardButton,
-    InlineKeyboardMarkup, InlineKeyboardButton
+    InlineKeyboardMarkup, InlineKeyboardButton,
+    WebAppInfo
 )
+import os
+
+WEBAPP_URL = os.getenv("WEBAPP_URL", "")
 
 
 def main_keyboard() -> ReplyKeyboardMarkup:
@@ -24,6 +28,11 @@ def plan_inline(is_withdrawal_day: bool = False, withdrawal_confirmed: bool = Fa
         buttons.append([InlineKeyboardButton(text="💸 Yechishni tasdiqlash", callback_data="confirm_withdrawal")])
     if not is_withdrawal_day or withdrawal_confirmed:
         buttons.append([InlineKeyboardButton(text="✅ Kunni yakunlash", callback_data="complete_day")])
+    if WEBAPP_URL:
+        buttons.append([InlineKeyboardButton(
+            text="📊 Batafsil statistika",
+            web_app=WebAppInfo(url=WEBAPP_URL)
+        )])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 

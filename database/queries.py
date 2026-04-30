@@ -153,23 +153,27 @@ async def get_journal_by_day(user_id: int, day_number: int) -> dict | None:
 
 async def create_today_journal(user_id: int, day_number: int, start_balance: float,
                                 target_profit: float, extra_target: float,
-                                is_withdrawal_day: bool, withdrawal_amount: float) -> dict:
+                                is_withdrawal_day: bool, withdrawal_amount: float,
+                                carry_over_amount: float = 0.0) -> dict:
     today = date.today()
     pool = await get_pool()
     async with pool.acquire() as conn:
         await conn.execute("""
             INSERT INTO daily_journal
                 (user_id, day_number, date, start_balance, target_profit,
-                 extra_target, is_withdrawal_day, withdrawal_amount)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                 extra_target, is_withdrawal_day, withdrawal_amount, carry_over_amount)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             ON CONFLICT (user_id, date) DO NOTHING
         """, user_id, day_number, today, start_balance, target_profit,
-            extra_target, is_withdrawal_day, withdrawal_amount)
+            extra_target, is_withdrawal_day, withdrawal_amount, carry_over_amount)
     return await get_today_journal(user_id)
 
 
 async def update_journal_pnl(user_id: int):
-    """Faqat bugungi kun savdolarini hisoblaydi"""
+    """
+    Bugungi kun net PnL hisoblaydi.
+    Net PnL = pnl + swap + commission (swap va commission manfiy bo'ladi)
+    """
     today = date.today()
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -180,9 +184,8 @@ async def update_journal_pnl(user_id: int):
         if not row:
             return
         day_number = row["day_number"]
-        # Faqat bugungi kun savdolari
         pnl_row = await conn.fetchrow(
-            """SELECT COALESCE(SUM(pnl), 0) AS total
+            """SELECT COALESCE(SUM(pnl + COALESCE(swap,0) + COALESCE(commission,0)), 0) AS total
                FROM trades
                WHERE user_id = $1
                  AND day_number = $2
@@ -196,6 +199,10 @@ async def update_journal_pnl(user_id: int):
 
 
 async def complete_day(user_id: int) -> dict:
+    """
+    Kunni yakunlaydi.
+    Agar actual_pnl < total_target bo'lsa — qolgan summa keyingi kunga rollover qilinadi.
+    """
     today = date.today()
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -206,16 +213,68 @@ async def complete_day(user_id: int) -> dict:
         if not journal:
             return {}
         journal = dict(journal)
-        end_balance = float(journal["start_balance"]) + float(journal["actual_pnl"] or 0)
-        if journal["withdrawal_confirmed"]:
-            end_balance -= float(journal["withdrawal_amount"] or 0)
-        end_balance = round(end_balance, 2)
+
+        actual_pnl = float(journal.get("actual_pnl") or 0)
+        start_balance = float(journal.get("start_balance") or 0)
+        target_profit = float(journal.get("target_profit") or 0)
+        extra_target = float(journal.get("extra_target") or 0)
+        carry_over_in = float(journal.get("carry_over_amount") or 0)
+        total_target = target_profit + extra_target + carry_over_in
+        withdrawal_amount = float(journal.get("withdrawal_amount") or 0)
+
+        end_balance = round(start_balance + actual_pnl, 2)
+        if journal.get("withdrawal_confirmed"):
+            end_balance = round(end_balance - withdrawal_amount, 2)
+
+        # Rollover hisoblash
+        carry_over_out = 0.0
+        is_rolled = False
+        if actual_pnl < total_target:
+            carry_over_out = round(total_target - actual_pnl, 2)
+            is_rolled = True
+
         await conn.execute("""
             UPDATE daily_journal
-            SET is_completed = TRUE, end_balance = $1, completed_at = NOW()
+            SET is_completed = TRUE,
+                end_balance = $1,
+                completed_at = NOW()
             WHERE user_id = $2 AND date = $3
         """, end_balance, user_id, today)
+
+        # Keyingi ish kunini topib rollover qo'shamiz
+        if is_rolled and carry_over_out > 0:
+            await _apply_rollover(conn, user_id, journal["day_number"], carry_over_out)
+
     return await get_today_journal(user_id)
+
+
+async def _apply_rollover(conn, user_id: int, current_day: int, carry_over: float):
+    """
+    Keyingi kun jurnalida carry_over_amount va is_rolled_over ni yangilaydi.
+    Agar jurnal hali yaratilmagan bo'lsa — settings da total_days ni 1 ga oshiramiz.
+    """
+    next_day = current_day + 1
+
+    # Keyingi kun jurnali bormi?
+    existing = await conn.fetchrow(
+        "SELECT id FROM daily_journal WHERE user_id = $1 AND day_number = $2",
+        user_id, next_day
+    )
+    if existing:
+        await conn.execute("""
+            UPDATE daily_journal
+            SET carry_over_amount = carry_over_amount + $1,
+                is_rolled_over = TRUE,
+                target_profit = target_profit + $1
+            WHERE user_id = $2 AND day_number = $3
+        """, carry_over, user_id, next_day)
+    else:
+        # Keyingi kun hali yaratilmagan — total_days ni oshiramiz
+        await conn.execute("""
+            UPDATE settings SET total_days = total_days + 1
+            WHERE user_id = $1
+        """, user_id)
+    logger.info(f"Rollover: user={user_id}, day={current_day}→{next_day}, carry={carry_over}")
 
 
 async def confirm_withdrawal(user_id: int):
@@ -333,3 +392,29 @@ async def get_all_users_for_reminder_all() -> list:
             WHERE s.is_active = TRUE
         """)
     return [dict(r) for r in rows]
+
+
+async def get_real_balance(user_id: int, starting_balance: float) -> float:
+    """
+    Haqiqiy joriy balans:
+    boshlang'ich + Σ net_pnl (pnl + swap + commission) barcha yakunlangan kunlar
+    """
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            SELECT COALESCE(SUM(pnl + COALESCE(swap,0) + COALESCE(commission,0)), 0) AS total
+            FROM trades t
+            JOIN daily_journal dj ON t.user_id = dj.user_id AND t.day_number = dj.day_number
+            WHERE t.user_id = $1 AND dj.is_completed = TRUE
+        """, user_id)
+    net_total = float(row["total"] if row else 0)
+    return round(float(starting_balance) + net_total, 2)
+
+
+async def get_settings_rest_days(user_id: int) -> set:
+    """Settings dan rest_days ni set formatida qaytaradi"""
+    from utils.calculator import parse_rest_days
+    s = await get_settings(user_id)
+    if not s:
+        return {5, 6}
+    return parse_rest_days(s.get("rest_days") or "6,7")
