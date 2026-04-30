@@ -341,19 +341,17 @@ async def handle_mt5_screenshot(message: Message, state: FSMContext,
         if not trades:
             if need_wait:
                 await message.answer(
-                    "⏳ <b>Barcha modellar vaqtincha band.</b>
-
-"
-                    "Biroz kuting va qayta urinib ko'ring.
-"
+                    "⏳ <b>Barcha modellar vaqtincha band.</b>"
+                    
+                    "Biroz kuting va qayta urinib ko'ring."
+                    
                     "Yoki savdoni qo'lda kiriting: <b>📊 Bugungi reja → 📝 Savdo kiriting</b>",
                     parse_mode="HTML"
                 )
             else:
                 await message.answer(
-                    "❌ Skrinshot tahlil qilinmadi.
-
-"
+                    "❌ Skrinshot tahlil qilinmadi."
+                    
                     "MT5 yopilgan savdolar ekranini yuboring yoki "
                     "savdoni qo'lda kiriting.",
                     parse_mode="HTML"
