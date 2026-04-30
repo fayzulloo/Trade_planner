@@ -4,7 +4,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from datetime import date, timedelta, datetime
 from database.queries import get_settings, get_journal_range, get_all_journals
-from utils.calculator import get_strategy_summary, is_weekend
+from utils.calculator import get_strategy_summary
 from utils.chart import generate_pnl_chart, generate_balance_chart
 from handlers.keyboards import stats_inline, stats_chart_inline
 from utils.logger import logger
