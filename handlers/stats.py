@@ -135,7 +135,7 @@ async def stats_strategy(call: CallbackQuery, db_user_id: int):
 
     pnl_emoji = "🟢" if summary["total_actual_profit"] >= 0 else "🔴"
     sign = "+" if summary["total_actual_profit"] >= 0 else ""
-    final_bal = summary["final_balance"]
+    final_bal = summary["real_balance"]
     final_bal_str = f"{final_bal:.2f}" if final_bal is not None else "—"
 
     text = (
