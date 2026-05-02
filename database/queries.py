@@ -250,31 +250,72 @@ async def complete_day(user_id: int) -> dict:
 
 async def _apply_rollover(conn, user_id: int, current_day: int, carry_over: float):
     """
-    Keyingi kun jurnalida carry_over_amount va is_rolled_over ni yangilaydi.
-    Agar jurnal hali yaratilmagan bo'lsa — settings da total_days ni 1 ga oshiramiz.
+    Rollover logikasi:
+    - Hozirgi kun (masalan 5-kun 27.04) yakunlandi, maqsad bajarilmadi
+    - Shu kun (5-kun) keyingi ish kuniga (28.04) suriladi
+    - Yangi sana bilan 5-kun qayta yaratiladi, reja = qolgan summa
+    - total_days 1 ga oshiriladi (chunki 27.04 savdosiz qoladi)
     """
-    next_day = current_day + 1
+    from utils.calculator import parse_rest_days
+    from datetime import date, timedelta
 
-    # Keyingi kun jurnali bormi?
-    existing = await conn.fetchrow(
-        "SELECT id FROM daily_journal WHERE user_id = $1 AND day_number = $2",
-        user_id, next_day
+    # Foydalanuvchi sozlamalaridan rest_days olish
+    settings_row = await conn.fetchrow(
+        "SELECT rest_days, total_days FROM settings WHERE user_id = $1", user_id
     )
-    if existing:
+    rest_days_str = settings_row["rest_days"] if settings_row else "6,7"
+    rest_days = parse_rest_days(rest_days_str)
+
+    # Keyingi ish kunini topish (dam olish kunlarini o'tkazib)
+    next_date = date.today() + timedelta(days=1)
+    while next_date.weekday() in rest_days:
+        next_date += timedelta(days=1)
+
+    # Hozirgi kun jurnalini is_rolled_over = TRUE deb belgilaymiz
+    await conn.execute("""
+        UPDATE daily_journal
+        SET is_rolled_over = TRUE
+        WHERE user_id = $1 AND day_number = $2
+    """, user_id, current_day)
+
+    # Keyingi sanada shu kun raqami bilan yangi jurnal yaratamiz
+    # (agar allaqachon mavjud bo'lmasa)
+    existing = await conn.fetchrow(
+        "SELECT id FROM daily_journal WHERE user_id = $1 AND date = $2",
+        user_id, next_date
+    )
+    if not existing:
+        # Boshlang'ich balans: bugungi end_balance
+        today_journal = await conn.fetchrow(
+            "SELECT end_balance, start_balance FROM daily_journal WHERE user_id = $1 AND day_number = $2",
+            user_id, current_day
+        )
+        new_start = float(today_journal["end_balance"] or today_journal["start_balance"] or 0)
+
+        await conn.execute("""
+            INSERT INTO daily_journal
+                (user_id, day_number, date, start_balance, target_profit,
+                 extra_target, carry_over_amount, is_withdrawal_day,
+                 withdrawal_amount, is_rolled_over)
+            VALUES ($1, $2, $3, $4, $5, 0, $6, FALSE, 0, TRUE)
+        """, user_id, current_day, next_date, new_start, carry_over, carry_over)
+    else:
+        # Mavjud bo'lsa — carry_over qo'shamiz
         await conn.execute("""
             UPDATE daily_journal
             SET carry_over_amount = carry_over_amount + $1,
-                is_rolled_over = TRUE,
-                target_profit = target_profit + $1
-            WHERE user_id = $2 AND day_number = $3
-        """, carry_over, user_id, next_day)
-    else:
-        # Keyingi kun hali yaratilmagan — total_days ni oshiramiz
-        await conn.execute("""
-            UPDATE settings SET total_days = total_days + 1
-            WHERE user_id = $1
-        """, user_id)
-    logger.info(f"Rollover: user={user_id}, day={current_day}→{next_day}, carry={carry_over}")
+                target_profit = target_profit + $1,
+                is_rolled_over = TRUE
+            WHERE user_id = $2 AND date = $3
+        """, carry_over, user_id, next_date)
+
+    # total_days 1 ga oshiramiz
+    await conn.execute("""
+        UPDATE settings SET total_days = total_days + 1
+        WHERE user_id = $1
+    """, user_id)
+
+    logger.info(f"Rollover: user={user_id}, kun={current_day}, {date.today()}→{next_date}, carry={carry_over}")
 
 
 async def confirm_withdrawal(user_id: int):

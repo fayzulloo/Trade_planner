@@ -4,7 +4,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from datetime import date, timedelta, datetime
 from database.queries import get_settings, get_journal_range, get_all_journals
-from utils.calculator import get_strategy_summary
+from utils.calculator import get_strategy_summary, is_weekend
 from utils.chart import generate_pnl_chart, generate_balance_chart
 from handlers.keyboards import stats_inline, stats_chart_inline
 from utils.logger import logger
@@ -135,7 +135,7 @@ async def stats_strategy(call: CallbackQuery, db_user_id: int):
 
     pnl_emoji = "🟢" if summary["total_actual_profit"] >= 0 else "🔴"
     sign = "+" if summary["total_actual_profit"] >= 0 else ""
-    final_bal = summary["real_balance"]
+    final_bal = summary.get("real_balance") or summary.get("final_balance") or 0
     final_bal_str = f"{final_bal:.2f}" if final_bal is not None else "—"
 
     text = (

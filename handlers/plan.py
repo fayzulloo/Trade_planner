@@ -55,7 +55,10 @@ async def build_plan_text(user_id: int) -> tuple[str, dict]:
             {}
         )
 
-    progression = calculate_balance_progression(settings)
+    # Journals bilan birga hisoblash — rollover ma'lumotlari uchun
+    from database.queries import get_all_journals
+    journals = await get_all_journals(user_id)
+    progression = calculate_balance_progression(settings, journals)
     if day > len(progression):
         day = len(progression)
     day_data = progression[day - 1]
