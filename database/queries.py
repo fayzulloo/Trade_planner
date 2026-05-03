@@ -49,6 +49,14 @@ async def is_settings_complete(user_id: int) -> bool:
 
 
 async def upsert_setting(user_id: int, key: str, value):
+    ALLOWED_KEYS = {
+        'starting_balance', 'daily_profit_rate', 'extra_target',
+        'withdrawal_amount', 'withdrawal_every', 'total_days',
+        'start_date', 'timezone', 'reminder_time', 'evening_reminder_time',
+        'auto_complete_time', 'broker_name', 'rest_days', 'is_active'
+    }
+    if key not in ALLOWED_KEYS:
+        raise ValueError(f"Noto'g'ri kalit: {key}")
     pool = await get_pool()
     async with pool.acquire() as conn:
         existing = await conn.fetchrow(
@@ -242,9 +250,10 @@ async def complete_day(user_id: int) -> dict:
             UPDATE daily_journal
             SET is_completed = TRUE,
                 end_balance = $1,
+                net_pnl = $4,
                 completed_at = NOW()
             WHERE user_id = $2 AND date = $3
-        """, end_balance, user_id, today)
+        """, end_balance, user_id, today, actual_pnl)
 
         # Keyingi ish kunini topib rollover qo'shamiz
         if is_rolled and carry_over_out > 0:
@@ -292,8 +301,8 @@ async def _apply_rollover(conn, user_id: int, current_day: int, carry_over: floa
     if not existing:
         # Boshlang'ich balans: bugungi end_balance
         today_journal = await conn.fetchrow(
-            "SELECT end_balance, start_balance FROM daily_journal WHERE user_id = $1 AND day_number = $2",
-            user_id, current_day
+            "SELECT end_balance, start_balance FROM daily_journal WHERE user_id = $1 AND date = $2",
+            user_id, date.today()
         )
         new_start = float(today_journal["end_balance"] or today_journal["start_balance"] or 0)
 
@@ -355,13 +364,14 @@ async def get_journal_range(user_id: int, from_date, to_date) -> list:
 
 
 async def get_all_journals(user_id: int) -> list:
-    """Faqat ish kunlari — strategiya hisoblash uchun"""
+    """Faqat ish kunlari — strategiya hisoblash uchun (rollover bo'lgan kunlar chiqarib tashlanadi)"""
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch("""
             SELECT * FROM daily_journal
             WHERE user_id = $1
               AND EXTRACT(DOW FROM date) NOT IN (0, 6)
+              AND is_rolled_over = FALSE
             ORDER BY date ASC
         """, user_id)
     return [dict(r) for r in rows]

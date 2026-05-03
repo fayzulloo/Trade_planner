@@ -47,7 +47,7 @@ def _journal_summary(journals: list, title: str) -> str:
     winning = [j for j in completed if _safe_float(j.get("actual_pnl")) > 0]
     losing = [j for j in completed if _safe_float(j.get("actual_pnl")) < 0]
     total_target = sum(
-        _safe_float(j.get("target_profit")) + _safe_float(j.get("extra_target"))
+        _safe_float(j.get("target_profit")) + _safe_float(j.get("extra_target")) + _safe_float(j.get("carry_over_amount"))
         for j in journals
     )
     total_target = float(total_target)
@@ -197,10 +197,13 @@ async def stats_range_to(message: Message, state: FSMContext, db_user_id: int):
     try:
         datetime.strptime(message.text.strip(), "%d.%m.%Y")
         data = await state.get_data()
-        from_d = datetime.strptime(data["from_date"], "%d.%m.%Y").date().isoformat()
-        to_d = datetime.strptime(message.text.strip(), "%d.%m.%Y").date().isoformat()
+        from_d = datetime.strptime(data["from_date"], "%d.%m.%Y").date()
+        to_d = datetime.strptime(message.text.strip(), "%d.%m.%Y").date()
+        if from_d > to_d:
+            await message.answer("⚠️ Boshlanish sanasi yakuniy sanadan katta bo'lmasligi kerak!")
+            return
         await state.clear()
-        journals = await get_journal_range(db_user_id, from_d, to_d)
+        journals = await get_journal_range(db_user_id, from_d.isoformat(), to_d.isoformat())
         text = _journal_summary(journals, f"📅 {data['from_date']} — {message.text.strip()}")
         await message.answer(text, reply_markup=stats_chart_inline("range"), parse_mode="HTML")
     except ValueError:

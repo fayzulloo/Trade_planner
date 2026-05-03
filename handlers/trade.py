@@ -159,6 +159,9 @@ async def trade_pnl(message: Message, state: FSMContext, db_user_id: int):
 
         settings = await get_settings(db_user_id)
         day = get_current_day(settings["start_date"], settings["total_days"])
+        if day == 0:
+            await message.answer("⚠️ Strategiya hali boshlanmagan yoki bugun dam olish kuni!")
+            return
 
         await add_trade(
             user_id=db_user_id,
@@ -501,6 +504,9 @@ async def mt5_save_all(call: CallbackQuery, state: FSMContext, db_user_id: int):
 
     settings = await get_settings(db_user_id)
     day = get_current_day(settings["start_date"], settings["total_days"])
+    if day == 0:
+        await call.answer("⚠️ Strategiya hali boshlanmagan yoki bugun dam olish kuni!", show_alert=True)
+        return
 
     saved = 0
     errors = 0

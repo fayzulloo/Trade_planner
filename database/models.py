@@ -115,6 +115,7 @@ async def migrate_db():
             "ALTER TABLE daily_journal ADD COLUMN IF NOT EXISTS extra_target NUMERIC(12,2) DEFAULT 0",
             "ALTER TABLE daily_journal ADD COLUMN IF NOT EXISTS carry_over_amount NUMERIC(12,2) DEFAULT 0",
             "ALTER TABLE daily_journal ADD COLUMN IF NOT EXISTS is_rolled_over BOOLEAN DEFAULT FALSE",
+            "ALTER TABLE daily_journal ADD COLUMN IF NOT EXISTS net_pnl NUMERIC(12,2) DEFAULT NULL",
         ]
         for sql in migrations:
             try:

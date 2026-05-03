@@ -36,12 +36,14 @@ async def send_daily_reminders(bot):
                 if not settings:
                     continue
 
-                day = get_current_day(settings["start_date"], settings["total_days"])
+                from utils.calculator import parse_rest_days, is_today_rest_day
+                rest_days = parse_rest_days(settings.get("rest_days") or "6,7")
+                day = get_current_day(settings["start_date"], settings["total_days"], rest_days)
                 total_days = settings["total_days"]
 
-                # Dam olish kunini tekshirish
+                # Dam olish kunini tekshirish (custom sozlamalar bilan)
                 today = date.today()
-                if today.weekday() >= 5:
+                if is_today_rest_day(rest_days):
                     continue
 
                 if day > total_days:
