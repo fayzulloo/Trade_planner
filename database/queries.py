@@ -173,6 +173,10 @@ async def update_journal_pnl(user_id: int):
     """
     Bugungi kun net PnL hisoblaydi.
     Net PnL = pnl + swap + commission (swap va commission manfiy bo'ladi)
+
+    FIX: DATE(created_at) = today filtri olib tashlandi.
+    Savdolar boshqa kunda import qilingan bo'lsa ham day_number bo'yicha
+    to'g'ri hisoblanadi.
     """
     today = date.today()
     pool = await get_pool()
@@ -184,13 +188,14 @@ async def update_journal_pnl(user_id: int):
         if not row:
             return
         day_number = row["day_number"]
+
+        # FIX: DATE(created_at) = $3 sharti olib tashlandi
         pnl_row = await conn.fetchrow(
             """SELECT COALESCE(SUM(pnl + COALESCE(swap,0) + COALESCE(commission,0)), 0) AS total
                FROM trades
                WHERE user_id = $1
-                 AND day_number = $2
-                 AND DATE(created_at) = $3""",
-            user_id, day_number, today
+                 AND day_number = $2""",
+            user_id, day_number
         )
         await conn.execute(
             "UPDATE daily_journal SET actual_pnl = $1 WHERE user_id = $2 AND date = $3",
@@ -384,17 +389,20 @@ async def add_trade(user_id: int, day_number: int, symbol: str, direction: str,
 
 
 async def get_trades_by_day(user_id: int, day_number: int) -> list:
-    """Faqat bugungi sanaga tegishli savdolar"""
-    today = date.today()
+    """
+    Berilgan day_number ga tegishli barcha savdolar.
+
+    FIX: DATE(created_at) = today filtri olib tashlandi.
+    Savdolar import vaqtidan qat'iy nazar day_number bo'yicha qaytariladi.
+    """
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """SELECT * FROM trades
                WHERE user_id = $1
                  AND day_number = $2
-                 AND DATE(created_at) = $3
                ORDER BY created_at""",
-            user_id, day_number, today
+            user_id, day_number
         )
     return [dict(r) for r in rows]
 
@@ -438,15 +446,17 @@ async def get_all_users_for_reminder_all() -> list:
 async def get_real_balance(user_id: int, starting_balance: float) -> float:
     """
     Haqiqiy joriy balans:
-    boshlang'ich + Σ net_pnl (pnl + swap + commission) barcha yakunlangan kunlar
+    boshlang'ich + Σ net_pnl (pnl + swap + commission) barcha savdolar uchun.
+
+    FIX: dj.is_completed = TRUE filtri olib tashlandi.
+    Bugungi yakunlanmagan kun savdolari ham hisobga olinadi.
     """
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow("""
             SELECT COALESCE(SUM(pnl + COALESCE(swap,0) + COALESCE(commission,0)), 0) AS total
-            FROM trades t
-            JOIN daily_journal dj ON t.user_id = dj.user_id AND t.day_number = dj.day_number
-            WHERE t.user_id = $1 AND dj.is_completed = TRUE
+            FROM trades
+            WHERE user_id = $1
         """, user_id)
     net_total = float(row["total"] if row else 0)
     return round(float(starting_balance) + net_total, 2)
