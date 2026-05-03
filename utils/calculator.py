@@ -47,19 +47,33 @@ def get_working_days_list(start_date_str: str, total_days: int,
     return working_days
 
 
-def get_current_day(start_date_str: str, total_days: int = 999,
+def get_current_day(start_date_str: str, total_days: int,
                      rest_days: set = None) -> int:
-    """Bugun strategiyaning necha-kunchi ish kuni ekanligini qaytaradi"""
+    """
+    Bugun strategiyaning necha-kunchi ish kuni ekanligini qaytaradi.
+
+    FIX #1: total_days endi majburiy parametr — 999 hardcode olib tashlandi.
+    Strategiya tugagan bo'lsa total_days qaytariladi (oxirgi kun).
+    Strategiya boshlanmagan bo'lsa 0 qaytariladi.
+    """
     if rest_days is None:
         rest_days = {5, 6}
     try:
         today = date.today()
         working_days = get_working_days_list(start_date_str, total_days, rest_days)
+
+        # Bugun ro'yxatda bormi — to'g'ridan-to'g'ri topamiz
         for i, d in enumerate(working_days):
             if d == today:
                 return i + 1
-        past = [d for d in working_days if d <= today]
-        return len(past) if past else 1
+
+        # Bugun ish kuni emas (dam olish kuni) yoki strategiya tugagan
+        past = [d for d in working_days if d < today]
+        if not past:
+            return 0  # Strategiya hali boshlanmagan
+
+        # Strategiya tugagan bo'lsa — oxirgi kun raqamini qaytaramiz
+        return min(len(past), total_days)
     except Exception:
         return 1
 
@@ -72,20 +86,31 @@ def is_today_rest_day(rest_days: set = None) -> bool:
 
 
 def is_withdrawal_day(day_number: int, withdrawal_every: int) -> bool:
-    return withdrawal_every > 0 and day_number > 0 and day_number % withdrawal_every == 0
+    """
+    FIX #4: withdrawal_every=1 bo'lsa har kuni chiqariladi — bu noto'g'ri.
+    Minimal chegara 2 kun qo'yildi.
+    """
+    return withdrawal_every >= 2 and day_number > 0 and day_number % withdrawal_every == 0
 
 
 def get_real_balance(starting_balance: float, journals: list) -> float:
     """
     Haqiqiy joriy balans:
-    boshlang'ich + Σ(pnl + swap + commission) barcha yakunlangan kunlar uchun
+    boshlang'ich + Σ(net_pnl) barcha yakunlangan kunlar uchun.
+
+    FIX #3: actual_pnl o'rniga net_pnl ishlatiladi — swap va commission
+    ni ham o'z ichiga oladi. net_pnl mavjud bo'lmasa actual_pnl fallback.
     """
     total = float(starting_balance or 0)
     for j in journals:
         if j.get("is_completed"):
-            total += float(j.get("actual_pnl") or 0)
-            # swap va commission daily_journal da saqlanmaydi
-            # trades dan hisoblanadi (update_journal_pnl da net_pnl ishlatiladi)
+            # net_pnl = actual_pnl + swap + commission (trades dan hisoblangan)
+            net_pnl = j.get("net_pnl")
+            if net_pnl is not None:
+                total += float(net_pnl)
+            else:
+                # Eski journal yozuvlari uchun fallback
+                total += float(j.get("actual_pnl") or 0)
     return round(total, 2)
 
 
@@ -93,6 +118,9 @@ def calculate_balance_progression(settings: dict, journals: list = None) -> list
     """
     Ish kunlari uchun balans progressiyasi.
     journals berilsa — rollover va haqiqiy balans hisobga olinadi.
+
+    FIX #2: carry_over endi keyingi kunning boshlang'ich balansiga qo'shiladi.
+    FIX #5: is_rolled flag balans hisob-kitobida ishlatiladi.
     """
     balance = float(settings.get("starting_balance") or 0)
     rate = float(settings.get("daily_profit_rate") or 0.20)
@@ -112,10 +140,14 @@ def calculate_balance_progression(settings: dict, journals: list = None) -> list
             journal_map[int(j.get("day_number", 0))] = j
 
     result = []
+    pending_carry_over = 0.0  # Oldingi kundan ko'chgan rollover summasi
+
     for i, day_date in enumerate(working_days):
         day_number = i + 1
 
-        # Agar bu kun rollover bo'lgan bo'lsa — carry_over qo'shamiz
+        # FIX #2 & #5: carry_over joriy kun uchun journal dan olinadi,
+        # lekin u keyingi kunning balansiga ta'sir qilishi kerak.
+        # pending_carry_over — oldingi kunda is_rolled=True bo'lgan summa.
         carry_over = 0.0
         is_rolled = False
         if day_number in journal_map:
@@ -123,10 +155,13 @@ def calculate_balance_progression(settings: dict, journals: list = None) -> list
             carry_over = float(j.get("carry_over_amount") or 0)
             is_rolled = bool(j.get("is_rolled_over"))
 
-        profit = round(balance * rate, 2)
+        # FIX #2: Oldingi kundan ko'chgan carry_over ni joriy balansga qo'shamiz
+        effective_balance = round(balance + pending_carry_over, 2)
+
+        profit = round(effective_balance * rate, 2)
         total_target = round(profit + extra + carry_over, 2)
         is_wday = is_withdrawal_day(day_number, withdrawal_every) and withdrawal > 0
-        end_balance = round(balance + profit, 2)
+        end_balance = round(effective_balance + profit, 2)
         withdrawn = round(withdrawal, 2) if is_wday else 0.0
         final_balance = round(end_balance - withdrawn, 2)
 
@@ -134,7 +169,7 @@ def calculate_balance_progression(settings: dict, journals: list = None) -> list
             "day": day_number,
             "date": day_date.strftime("%d.%m.%Y"),
             "date_iso": day_date.isoformat(),
-            "start_balance": round(balance, 2),
+            "start_balance": effective_balance,
             "profit_target": profit,
             "extra_target": extra,
             "carry_over": carry_over,
@@ -147,6 +182,8 @@ def calculate_balance_progression(settings: dict, journals: list = None) -> list
         })
 
         balance = final_balance
+        # FIX #5: Keyingi kun uchun carry_over ni saqlаymiz
+        pending_carry_over = carry_over if is_rolled else 0.0
 
     return result
 
@@ -155,7 +192,12 @@ def get_strategy_summary(settings: dict, journals: list) -> dict:
     """Strategiya yakuniy natijasi"""
     progression = calculate_balance_progression(settings, journals)
     total_expected = sum(d["total_target"] for d in progression)
-    total_actual = sum(float(j.get("actual_pnl") or 0) for j in journals)
+
+    # FIX #3: net_pnl ishlatiladi (swap + commission bilan birga)
+    total_actual = sum(
+        float(j.get("net_pnl") if j.get("net_pnl") is not None else j.get("actual_pnl") or 0)
+        for j in journals
+    )
     total_withdrawn = sum(
         float(j.get("withdrawal_amount") or 0)
         for j in journals
