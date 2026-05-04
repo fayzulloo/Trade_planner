@@ -130,6 +130,12 @@ async def trade_exit(message: Message, state: FSMContext):
 
 @router.message(TradeForm.quantity)
 async def trade_quantity(message: Message, state: FSMContext):
+    if not message.text:
+        await message.answer(
+            "⚠️ Faqat raqam yuboring:",
+            reply_markup=cancel_keyboard(), parse_mode="HTML"
+        )
+        return
     try:
         qty = float(message.text.replace(",", "."))
         if qty <= 0:
@@ -152,6 +158,12 @@ async def trade_quantity(message: Message, state: FSMContext):
 
 @router.message(TradeForm.pnl)
 async def trade_pnl(message: Message, state: FSMContext, db_user_id: int):
+    if not message.text:
+        await message.answer(
+            "⚠️ Faqat raqam yuboring (masalan: +25.50 yoki -15.00):",
+            reply_markup=cancel_keyboard(), parse_mode="HTML"
+        )
+        return
     try:
         pnl = float(message.text.replace(",", ".").replace("+", ""))
         data = await state.get_data()

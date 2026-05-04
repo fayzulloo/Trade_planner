@@ -206,7 +206,7 @@ async def update_journal_pnl(user_id: int):
             user_id, day_number
         )
         await conn.execute(
-            "UPDATE daily_journal SET actual_pnl = $1 WHERE user_id = $2 AND date = $3",
+            "UPDATE daily_journal SET actual_pnl = $1, net_pnl = $1 WHERE user_id = $2 AND date = $3",
             float(pnl_row["total"]), user_id, today
         )
 
@@ -235,15 +235,23 @@ async def complete_day(user_id: int) -> dict:
         total_target = target_profit + extra_target + carry_over_in
         withdrawal_amount = float(journal.get("withdrawal_amount") or 0)
 
-        end_balance = round(start_balance + actual_pnl, 2)
+        # Haqiqiy net PnL: pnl + swap + commission (swap/commission manfiy bo'ladi)
+        net_pnl_row = await conn.fetchrow("""
+            SELECT COALESCE(SUM(pnl + COALESCE(swap, 0) + COALESCE(commission, 0)), 0) AS total
+            FROM trades
+            WHERE user_id = $1 AND day_number = $2
+        """, user_id, journal["day_number"])
+        net_pnl = round(float(net_pnl_row["total"]), 2)
+
+        end_balance = round(start_balance + net_pnl, 2)
         if journal.get("withdrawal_confirmed"):
             end_balance = round(end_balance - withdrawal_amount, 2)
 
-        # Rollover hisoblash
+        # Rollover hisoblash — net_pnl (swap/commission bilan) asosida
         carry_over_out = 0.0
         is_rolled = False
-        if actual_pnl < total_target:
-            carry_over_out = round(total_target - actual_pnl, 2)
+        if net_pnl < total_target:
+            carry_over_out = round(total_target - net_pnl, 2)
             is_rolled = True
 
         await conn.execute("""
@@ -253,13 +261,17 @@ async def complete_day(user_id: int) -> dict:
                 net_pnl = $4,
                 completed_at = NOW()
             WHERE user_id = $2 AND date = $3
-        """, end_balance, user_id, today, actual_pnl)
+        """, end_balance, user_id, today, net_pnl)
 
         # Keyingi ish kunini topib rollover qo'shamiz
         if is_rolled and carry_over_out > 0:
             await _apply_rollover(conn, user_id, journal["day_number"], carry_over_out)
 
-    return await get_today_journal(user_id)
+    result = await get_today_journal(user_id) or {}
+    # Chiquvchi rollover summasini alohida qo'shamiz (kiruvchi carry_over_amount bilan chalkashmaslik uchun)
+    result["carry_over_out"] = carry_over_out
+    result["is_rolled_out"] = is_rolled
+    return result
 
 
 async def _apply_rollover(conn, user_id: int, current_day: int, carry_over: float):
@@ -311,15 +323,14 @@ async def _apply_rollover(conn, user_id: int, current_day: int, carry_over: floa
                 (user_id, day_number, date, start_balance, target_profit,
                  extra_target, carry_over_amount, is_withdrawal_day,
                  withdrawal_amount, is_rolled_over)
-            VALUES ($1, $2, $3, $4, $5, 0, $6, FALSE, 0, TRUE)
+            VALUES ($1, $2, $3, $4, $5, 0, $6, FALSE, 0, FALSE)
         """, user_id, current_day, next_date, new_start, carry_over, carry_over)
     else:
-        # Mavjud bo'lsa — carry_over qo'shamiz
+        # Mavjud bo'lsa — carry_over qo'shamiz (is_rolled_over o'zgartirilmaydi)
         await conn.execute("""
             UPDATE daily_journal
             SET carry_over_amount = carry_over_amount + $1,
-                target_profit = target_profit + $1,
-                is_rolled_over = TRUE
+                target_profit = target_profit + $1
             WHERE user_id = $2 AND date = $3
         """, carry_over, user_id, next_date)
 
@@ -342,14 +353,23 @@ async def confirm_withdrawal(user_id: int):
         )
 
 
-async def get_journal_range(user_id: int, from_date, to_date) -> list:
-    """Faqat ish kunlarini qaytaradi (shanba/yakshanba yoq)"""
+async def get_journal_range(user_id: int, from_date, to_date,
+                            rest_days: set = None) -> list:
+    """
+    Berilgan sana oralig'idagi jurnallarni qaytaradi.
+    rest_days — Python weekday() formatida (0=dushanba, 6=yakshanba).
+    Agar berilmasa — settings dan olinadi.
+    """
     from datetime import datetime as dt
     def to_date_obj(d):
         if hasattr(d, "year"): return d
         return dt.strptime(d, "%Y-%m-%d").date() if "-" in str(d) else dt.strptime(d, "%d.%m.%Y").date()
     from_d = to_date_obj(from_date)
     to_d = to_date_obj(to_date)
+
+    if rest_days is None:
+        rest_days = await get_settings_rest_days(user_id)
+
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch("""
@@ -357,24 +377,29 @@ async def get_journal_range(user_id: int, from_date, to_date) -> list:
             WHERE user_id = $1
               AND date >= $2
               AND date <= $3
-              AND EXTRACT(DOW FROM date) NOT IN (0, 6)
             ORDER BY date ASC
         """, user_id, from_d, to_d)
-    return [dict(r) for r in rows]
+    return [dict(r) for r in rows if r["date"].weekday() not in rest_days]
 
 
-async def get_all_journals(user_id: int) -> list:
-    """Faqat ish kunlari — strategiya hisoblash uchun (rollover bo'lgan kunlar chiqarib tashlanadi)"""
+async def get_all_journals(user_id: int, rest_days: set = None) -> list:
+    """
+    Barcha ish kunlari — strategiya hisoblash uchun.
+    Rollover bo'lgan kunlar chiqarib tashlanadi (ikki marta hisoblanmaslik uchun).
+    rest_days — Python weekday() formatida. Agar berilmasa — settings dan olinadi.
+    """
+    if rest_days is None:
+        rest_days = await get_settings_rest_days(user_id)
+
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch("""
             SELECT * FROM daily_journal
             WHERE user_id = $1
-              AND EXTRACT(DOW FROM date) NOT IN (0, 6)
               AND is_rolled_over = FALSE
             ORDER BY date ASC
         """, user_id)
-    return [dict(r) for r in rows]
+    return [dict(r) for r in rows if r["date"].weekday() not in rest_days]
 
 
 # ===== TRADES =====
@@ -417,25 +442,29 @@ async def get_trades_by_day(user_id: int, day_number: int) -> list:
     return [dict(r) for r in rows]
 
 
-async def get_trades_range(user_id: int, from_date, to_date) -> list:
+async def get_trades_range(user_id: int, from_date, to_date,
+                           rest_days: set = None) -> list:
     from datetime import datetime as dt
     def to_d(d):
         if hasattr(d, "year"): return d
         return dt.strptime(d, "%Y-%m-%d").date() if "-" in str(d) else dt.strptime(d, "%d.%m.%Y").date()
     from_d = to_d(from_date)
     to_d2 = to_d(to_date)
+
+    if rest_days is None:
+        rest_days = await get_settings_rest_days(user_id)
+
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch("""
-            SELECT t.* FROM trades t
+            SELECT t.*, dj.date AS journal_date FROM trades t
             JOIN daily_journal dj ON t.user_id = dj.user_id AND t.day_number = dj.day_number
             WHERE t.user_id = $1
               AND dj.date >= $2
               AND dj.date <= $3
-              AND EXTRACT(DOW FROM dj.date) NOT IN (0, 6)
             ORDER BY t.created_at ASC
         """, user_id, from_d, to_d2)
-    return [dict(r) for r in rows]
+    return [dict(r) for r in rows if r["journal_date"].weekday() not in rest_days]
 
 
 # ===== SCHEDULER =====

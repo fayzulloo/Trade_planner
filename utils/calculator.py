@@ -72,8 +72,9 @@ def get_current_day(start_date_str: str, total_days: int,
         if not past:
             return 0  # Strategiya hali boshlanmagan
 
-        # Strategiya tugagan bo'lsa — oxirgi kun raqamini qaytaramiz
-        return min(len(past), total_days)
+        # Strategiya tugagan bo'lsa — total_days + 1 qaytaramiz
+        # (plan.py da "if day > total_days" sharti True bo'lsin)
+        return total_days + 1
     except Exception:
         return 1
 

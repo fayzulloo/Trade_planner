@@ -49,7 +49,9 @@ async def send_daily_reminders(bot):
                 if day > total_days:
                     continue
 
-                progression = calculate_balance_progression(settings)
+                from database.queries import get_all_journals
+                journals = await get_all_journals(user_id, rest_days)
+                progression = calculate_balance_progression(settings, journals)
                 day_data = progression[day - 1] if day <= len(progression) else None
                 if not day_data:
                     continue
@@ -98,7 +100,11 @@ async def _send_evening_reminder(bot, telegram_id: int, user_id: int, day: int):
             return  # Kun allaqachon yakunlangan
 
         actual_pnl = float(journal.get("actual_pnl") or 0) if journal else 0
-        target = float(journal.get("target_profit") or 0) + float(journal.get("extra_target") or 0) if journal else 0
+        target = (
+            float(journal.get("target_profit") or 0)
+            + float(journal.get("extra_target") or 0)
+            + float(journal.get("carry_over_amount") or 0)
+        ) if journal else 0
         remaining = round(target - actual_pnl, 2)
         rem_emoji = "✅" if remaining <= 0 else "⏳"
 

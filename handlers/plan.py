@@ -181,7 +181,10 @@ async def plan_refresh(call: CallbackQuery, db_user_id: int, settings_complete: 
 
 
 @router.callback_query(F.data == "confirm_withdrawal")
-async def do_confirm_withdrawal(call: CallbackQuery, db_user_id: int):
+async def do_confirm_withdrawal(call: CallbackQuery, db_user_id: int, settings_complete: bool):
+    if not settings_complete:
+        await call.answer("⚠️ Avval sozlamalarni to'ldiring!", show_alert=True)
+        return
     await confirm_withdrawal(db_user_id)
     text, info = await build_plan_text(db_user_id)
     is_wday = info.get("is_withdrawal_day", False)
@@ -216,8 +219,8 @@ async def do_complete_day(call: CallbackQuery, db_user_id: int):
 
     completed = await complete_day(db_user_id)
     end_balance = float(completed.get("end_balance") or 0)
-    carry_over = float(completed.get("carry_over_amount") or 0) if completed else 0
-    is_rolled = bool(completed.get("is_rolled_over")) if completed else False
+    carry_over = float(completed.get("carry_over_out") or 0)      # chiquvchi rollover summasi
+    is_rolled = bool(completed.get("is_rolled_out")) if completed else False
 
     logger.info(f"Kun yakunlandi: user={db_user_id}, pnl={actual_pnl}, rollover={carry_over}")
 
@@ -244,6 +247,9 @@ async def do_complete_day(call: CallbackQuery, db_user_id: int):
 
 @router.callback_query(F.data == "cancel")
 async def cancel_action(call: CallbackQuery, db_user_id: int, settings_complete: bool):
+    if not settings_complete:
+        await call.answer("⚠️ Avval sozlamalarni to'ldiring!", show_alert=True)
+        return
     text, info = await build_plan_text(db_user_id)
     is_wday = info.get("is_withdrawal_day", False)
     wc = info.get("withdrawal_confirmed", False)

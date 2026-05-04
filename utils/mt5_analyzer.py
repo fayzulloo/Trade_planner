@@ -129,12 +129,10 @@ def _parse_response(raw: str) -> list | None:
                 logger.warning(f"Majburiy maydonlar yo'q: {t}")
                 continue
 
-            # PnL Gemini dan keladi — pnl_abs musbat, rang orqali belgi aniqlanadi
-            # Gemini promptida qizil=manfiy, yashil/ko'k=musbat deb ko'rsatilgan
-            pnl_abs = _safe_float(t.get("pnl_abs"))
-            # pnl_sign: Gemini agar to'g'ri o'qisa — pnl_abs ni to'g'ri belgisi bilan yuboradi
-            # Biz pnl_abs ni saqlаymiz, trade.py da foydalanuvchi tasdiqlaydi
-            pnl = pnl_abs  # musbat qiymat — foydalanuvchi ko'radi va tasdiqlaydi
+            # pnl_abs — promptdagi asosiy kalit, lekin 'pnl' ga ham fallback
+            pnl_abs = _safe_float(t.get("pnl_abs")) if t.get("pnl_abs") is not None \
+                      else _safe_float(t.get("pnl"))
+            pnl = pnl_abs  # musbat/manfiy — foydalanuvchi ko'radi va tasdiqlaydi
 
             # order_id dan # belgisini tozalash
             order_id_raw = str(t.get("order_id") or "").strip()
@@ -262,9 +260,11 @@ async def analyze_mt5_screenshot(image_bytes: bytes) -> tuple[list | None, bool]
         logger.error("GEMINI_API_KEY topilmadi!")
         return None, False
 
-    # Rasm formatini aniqlash
+    # Rasm formatini aniqlash (PNG, WebP, JPEG)
     if image_bytes[:4] == b'\x89PNG':
         mime_type = "image/png"
+    elif image_bytes[:4] == b'RIFF' and image_bytes[8:12] == b'WEBP':
+        mime_type = "image/webp"
     else:
         mime_type = "image/jpeg"
 
