@@ -51,7 +51,8 @@ async def run(apply: bool):
     import asyncpg
 
     print(f"\n{'='*60}")
-    print(f"  {'APPLY MODE' if apply else 'DRY RUN — hech narsa o\\'zgarmaydi'}")
+    mode_label = 'APPLY MODE' if apply else "DRY RUN — hech narsa o'zgarmaydi"
+    print(f"  {mode_label}")
     print(f"{'='*60}\n")
 
     conn = await asyncpg.connect(DATABASE_URL)
