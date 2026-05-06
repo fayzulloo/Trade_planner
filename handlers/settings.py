@@ -1,586 +1,428 @@
+"""
+Sozlamalar handlerlari.
+Har bir sozlama uchun FSM oqimi.
+"""
+
+import logging
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from database.queries import get_settings, upsert_setting, activate_strategy
-from handlers.keyboards import main_keyboard
-from utils.logger import logger
-import pytz
 
+from database.queries import get_settings, save_settings
+from handlers.keyboards import (
+    settings_kb, cancel_settings_kb,
+    timezone_kb, rest_days_kb,
+    evening_reminder_kb, broker_kb,
+    main_menu_kb,
+)
+from utils.calculator import parse_time_str, parse_start_date
+
+logger = logging.getLogger(__name__)
 router = Router()
-
-TIMEZONES = [
-    "Asia/Tashkent", "Asia/Almaty", "Asia/Baku", "Asia/Tbilisi",
-    "Europe/Moscow", "Europe/London", "America/New_York", "Asia/Dubai"
-]
 
 
 class SettingsForm(StatesGroup):
-    balance = State()
-    rate = State()
-    extra = State()
-    withdrawal = State()
-    wevery = State()
-    days = State()
-    startdate = State()
-    reminder = State()
-    evening_reminder = State()
-    auto_complete = State()
-    broker = State()
+    """Sozlama qiymatini kutish."""
+    waiting = State()
 
 
-def cancel_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="❌ Bekor qilish", callback_data="settings_open")]
-    ])
+# Qaysi sozlama tahrirlanyapti
+SETTING_KEY = "setting_key"
+
+# Sozlama tavsiflari (foydalanuvchiga ko'rsatiladigan)
+SETTING_LABELS = {
+    "set_balance":          ("starting_balance",     "💰 Boshlang'ich balansni kiriting ($):"),
+    "set_rate":             ("daily_profit_rate",    "📊 Kunlik foiz kiriting (masalan: 10 yoki 0.10):"),
+    "set_extra":            ("extra_target",         "➕ Qo'shimcha kunlik maqsad kiriting ($):"),
+    "set_withdrawal":       ("withdrawal_amount",    "💸 Yechish summasi kiriting ($):"),
+    "set_wevery":           ("withdrawal_every",     "📅 Har necha kunda yechish? (masalan: 7):"),
+    "set_days":             ("total_days",           "🗓 Strategiya davri (kun soni, masalan: 20):"),
+    "set_startdate":        ("start_date",           "📆 Boshlanish sanasi kiriting (DD.MM.YYYY):"),
+    "set_reminder":         ("reminder_time",        "⏰ Ertalabki eslatma vaqti (HH:MM, masalan: 08:00):"),
+    "set_auto_complete":    ("auto_complete_time",   "🔄 Avtomatik yakunlash vaqti (HH:MM, masalan: 23:30):"),
+}
 
 
-def settings_inline_kb(s: dict | None) -> InlineKeyboardMarkup:
-    def val(key, default="—"):
-        if not s:
-            return default
-        v = s.get(key)
-        return v if v is not None else default
-
-    rate_pct = int(float(val("daily_profit_rate", 0.20)) * 100)
-    evening = val("evening_reminder_time", None)
-    evening_text = evening if evening and evening != "—" else "Kiritilmagan"
-    auto_complete = val("auto_complete_time", None)
-    auto_text = auto_complete if auto_complete and auto_complete != "—" else "Kiritilmagan ⚠️"
-
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"💰 Boshlang'ich balans: {val('starting_balance')}$", callback_data="set_balance")],
-        [InlineKeyboardButton(text=f"📊 Kunlik foiz: {rate_pct}%", callback_data="set_rate")],
-        [InlineKeyboardButton(text=f"➕ Qo'shimcha maqsad: {val('extra_target', 0)}$", callback_data="set_extra")],
-        [InlineKeyboardButton(text=f"💸 Yechish summasi: {val('withdrawal_amount', 0)}$", callback_data="set_withdrawal")],
-        [InlineKeyboardButton(text=f"📅 Yechish davri: har {val('withdrawal_every')} kunda", callback_data="set_wevery")],
-        [InlineKeyboardButton(text=f"🗓 Kun soni: {val('total_days')} kun", callback_data="set_days")],
-        [InlineKeyboardButton(text=f"📆 Boshlanish: {val('start_date')}", callback_data="set_startdate")],
-        [InlineKeyboardButton(text=f"🌍 Timezone: {val('timezone', 'Asia/Tashkent')}", callback_data="set_timezone")],
-        [InlineKeyboardButton(text=f"⏰ Ertalabki eslatma: {val('reminder_time', '08:00')}", callback_data="set_reminder")],
-        [InlineKeyboardButton(text=f"🌙 Kechki eslatma: {evening_text}", callback_data="set_evening_reminder")],
-        [InlineKeyboardButton(text=f"🔄 Avtomatik yakunlash: {auto_text}", callback_data="set_auto_complete")],
-        [InlineKeyboardButton(text=f"🏦 Broker: {val('broker_name', 'Kiritilmagan')}", callback_data="set_broker")],
-        [InlineKeyboardButton(text="🗓 Dam olish kunlari", callback_data="set_rest_days")],
-        [InlineKeyboardButton(text="💾 Saqlash va yopish", callback_data="settings_save")],
-    ])
-
-
-def _settings_text() -> str:
-    return (
-        "⚙️ <b>Sozlamalar</b>\n"
-        "━━━━━━━━━━━━━━━\n"
-        "Quyidagi tugmalardan birini bosib o'zgartiring.\n"
-        "Tugatgach <b>💾 Saqlash</b> tugmasini bosing."
-    )
+async def _show_settings(target, user_id: int) -> None:
+    """
+    Sozlamalar menyusini ko'rsatadi.
+    target — Message yoki CallbackQuery.message
+    """
+    settings = await get_settings(user_id)
+    text = "⚙️ <b>Sozlamalar</b>\n\nO'zgartirmoqchi bo'lgan sozlamani tanlang:"
+    kb = settings_kb(dict(settings) if settings else {})
+    try:
+        await target.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    except Exception:
+        await target.answer(text, reply_markup=kb, parse_mode="HTML")
 
 
 @router.message(F.text == "⚙️ Sozlamalar")
-async def settings_handler(message: Message, db_user_id: int):
-    s = await get_settings(db_user_id)
-    await message.answer(
-        _settings_text(),
-        reply_markup=settings_inline_kb(s),
-        parse_mode="HTML"
-    )
+async def open_settings_message(message: Message, user_id: int, **kwargs) -> None:
+    """Sozlamalar menyusini ochish (Reply keyboard orqali)."""
+    try:
+        settings = await get_settings(user_id)
+        text = "⚙️ <b>Sozlamalar</b>\n\nO'zgartirmoqchi bo'lgan sozlamani tanlang:"
+        await message.answer(
+            text,
+            reply_markup=settings_kb(dict(settings) if settings else {}),
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logger.error(f"open_settings_message xato [user_id={user_id}]: {e}")
 
 
 @router.callback_query(F.data == "settings_open")
-async def settings_open(call: CallbackQuery, state: FSMContext, db_user_id: int):
+async def open_settings_callback(callback: CallbackQuery, user_id: int, **kwargs) -> None:
+    """Sozlamalar menyusini ochish (callback orqali)."""
+    try:
+        await _show_settings(callback.message, user_id)
+    except Exception as e:
+        logger.error(f"open_settings_callback xato [user_id={user_id}]: {e}")
+    finally:
+        await callback.answer()
+
+
+# ─────────────────────────────────────────────
+# ODDIY MATN KIRITISH SOZLAMALARI
+# ─────────────────────────────────────────────
+
+@router.callback_query(F.data.in_(SETTING_LABELS.keys()))
+async def setting_ask_value(callback: CallbackQuery, state: FSMContext, **kwargs) -> None:
+    """Sozlama qiymati so'rash."""
+    cb = callback.data
+    _, prompt = SETTING_LABELS[cb]
+    await state.set_state(SettingsForm.waiting)
+    await state.update_data(**{SETTING_KEY: cb})
+    await callback.message.edit_text(
+        prompt,
+        reply_markup=cancel_settings_kb(),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.message(SettingsForm.waiting)
+async def setting_save_value(message: Message, state: FSMContext, user_id: int, **kwargs) -> None:
+    """
+    Sozlama qiymatini saqlash.
+    Har bir sozlama uchun validatsiya qilinadi.
+    Maxsus keylar (evening_reminder, broker) ham shu yerda qayta ishlanadi.
+    """
+    data = await state.get_data()
+    cb = data.get(SETTING_KEY)
+    if not cb:
+        await state.clear()
+        return
+
+    raw = message.text.strip()
+
+    # Maxsus holat: kechki eslatma
+    if cb == "set_evening_reminder_custom":
+        if not parse_time_str(raw):
+            await message.answer(
+                "⚠️ Noto'g'ri format. HH:MM ko'rinishida kiriting:",
+                reply_markup=cancel_settings_kb(),
+            )
+            return
+        await state.clear()
+        try:
+            await save_settings(user_id, evening_reminder_time=raw)
+            settings = await get_settings(user_id)
+            await message.answer(
+                "✅ Saqlandi!\n\n⚙️ <b>Sozlamalar</b>",
+                reply_markup=settings_kb(dict(settings) if settings else {}),
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            logger.error(f"evening_reminder save xato [user_id={user_id}]: {e}")
+            await message.answer("⚠️ Saqlashda xato yuz berdi.")
+        return
+
+    # Maxsus holat: broker nomi
+    if cb == "set_broker_custom":
+        await state.clear()
+        try:
+            await save_settings(user_id, broker_name=raw)
+            settings = await get_settings(user_id)
+            await message.answer(
+                "✅ Saqlandi!\n\n⚙️ <b>Sozlamalar</b>",
+                reply_markup=settings_kb(dict(settings) if settings else {}),
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            logger.error(f"broker save xato [user_id={user_id}]: {e}")
+            await message.answer("⚠️ Saqlashda xato yuz berdi.")
+        return
+
+    # Oddiy sozlamalar
+    if cb not in SETTING_LABELS:
+        await state.clear()
+        return
+
+    db_key, _ = SETTING_LABELS[cb]
+
+    try:
+        value = _parse_setting_value(cb, raw)
+    except ValueError as e:
+        await message.answer(f"⚠️ {e}\nQaytadan kiriting:", reply_markup=cancel_settings_kb())
+        return
+
     await state.clear()
-    s = await get_settings(db_user_id)
-    await call.message.edit_text(
-        _settings_text(),
-        reply_markup=settings_inline_kb(s),
-        parse_mode="HTML"
-    )
-    await call.answer()
+
+    try:
+        await save_settings(user_id, **{db_key: value})
+
+        # Sozlamalar to'liq bo'lsa is_active = TRUE
+        await _check_and_activate(user_id)
+
+        settings = await get_settings(user_id)
+        await message.answer(
+            "✅ Saqlandi!\n\n⚙️ <b>Sozlamalar</b>",
+            reply_markup=settings_kb(dict(settings) if settings else {}),
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logger.error(f"setting_save_value xato [user_id={user_id}]: {e}")
+        await message.answer("⚠️ Saqlashda xato yuz berdi.")
 
 
-@router.callback_query(F.data == "settings_save")
-async def settings_save(call: CallbackQuery, db_user_id: int):
-    """Saqlash tugmasi — avtomatik yakunlash majburiy"""
-    s = await get_settings(db_user_id)
-    if not s:
-        await call.answer("⚠️ Hech narsa sozlanmagan!", show_alert=True)
+def _parse_setting_value(cb: str, raw: str):
+    """
+    Sozlama qiymatini to'g'ri tipga o'giradi.
+    ValueError chiqaradi — noto'g'ri format bo'lsa.
+    """
+    if cb == "set_balance":
+        v = float(raw.replace(",", ".").replace("$", ""))
+        if v <= 0:
+            raise ValueError("Balans musbat bo'lishi kerak.")
+        return v
+
+    elif cb == "set_rate":
+        v = float(raw.replace(",", ".").replace("%", ""))
+        # 10 → 0.10 avtomatik konversiya
+        if v > 1:
+            v = v / 100
+        if not (0 < v <= 1):
+            raise ValueError("Foiz 0 dan katta, 100 dan kichik bo'lishi kerak.")
+        return v
+
+    elif cb in ("set_extra", "set_withdrawal"):
+        v = float(raw.replace(",", ".").replace("$", ""))
+        if v < 0:
+            raise ValueError("Qiymat manfiy bo'lishi mumkin emas.")
+        return v
+
+    elif cb in ("set_wevery", "set_days"):
+        v = int(raw)
+        if v <= 0:
+            raise ValueError("Qiymat musbat son bo'lishi kerak.")
+        return v
+
+    elif cb == "set_startdate":
+        d = parse_start_date(raw)
+        if not d:
+            raise ValueError("Noto'g'ri format. DD.MM.YYYY ko'rinishida kiriting.")
+        return raw  # DB da TEXT saqlanadi
+
+    elif cb in ("set_reminder", "set_auto_complete"):
+        if not parse_time_str(raw):
+            raise ValueError("Noto'g'ri format. HH:MM ko'rinishida kiriting.")
+        return raw
+
+    return raw
+
+
+async def _check_and_activate(user_id: int) -> None:
+    """
+    Barcha majburiy sozlamalar to'liq bo'lsa is_active = TRUE qiladi.
+    Majburiy: starting_balance, start_date, total_days.
+    """
+    settings = await get_settings(user_id)
+    if not settings:
         return
-
-    # Avtomatik yakunlash vaqti majburiy
-    if not s.get("auto_complete_time"):
-        await call.answer(
-            "⚠️ Avtomatik yakunlash vaqtini kiriting! (🔄 tugmasi)",
-            show_alert=True
-        )
-        return
-
-    rate_pct = int(float(s.get("daily_profit_rate") or 0.20) * 100)
-    evening = s.get("evening_reminder_time")
-    auto = s.get("auto_complete_time")
-
-    text = (
-        "✅ <b>Sozlamalar saqlandi!</b>\n"
-        "━━━━━━━━━━━━━━━\n"
-        f"💰 Boshlang'ich balans: <b>{s.get('starting_balance') or '—'}$</b>\n"
-        f"📊 Kunlik foiz: <b>{rate_pct}%</b>\n"
-        f"➕ Qo'shimcha maqsad: <b>{s.get('extra_target') or 0}$</b>\n"
-        f"💸 Yechish summasi: <b>{s.get('withdrawal_amount') or 0}$</b>\n"
-        f"📅 Yechish davri: <b>har {s.get('withdrawal_every') or '—'} kunda</b>\n"
-        f"🗓 Kun soni: <b>{s.get('total_days') or '—'} kun</b>\n"
-        f"📆 Boshlanish: <b>{s.get('start_date') or '—'}</b>\n"
-        f"🌍 Timezone: <b>{s.get('timezone') or 'Asia/Tashkent'}</b>\n"
-        f"⏰ Ertalabki eslatma: <b>{s.get('reminder_time') or '08:00'}</b>\n"
-        f"🌙 Kechki eslatma: <b>{evening or 'Kiritilmagan'}</b>\n"
-        f"🔄 Avtomatik yakunlash: <b>{auto}</b>\n"
-        f"🏦 Broker: <b>{s.get('broker_name') or 'Kiritilmagan'}</b>\n"
-        f"🗓 Dam olish: <b>{_format_rest_days(s.get('rest_days', '6,7'))}</b>\n"
-    )
-    await call.message.edit_text(text, reply_markup=None, parse_mode="HTML")
-    await call.answer("✅ Saqlandi!")
-    logger.info(f"Sozlamalar saqlandi: user_id={db_user_id}")
+    if (
+        settings.get("starting_balance") and
+        settings.get("start_date") and
+        settings.get("total_days")
+    ):
+        await save_settings(user_id, is_active=True)
 
 
-# ===== BALANCE =====
-@router.callback_query(F.data == "set_balance")
-async def ask_balance(call: CallbackQuery, state: FSMContext):
-    await state.set_state(SettingsForm.balance)
-    await call.message.edit_text(
-        "💰 Boshlang'ich balans kiriting (USD):\n<i>Masalan: 100</i>",
-        reply_markup=cancel_kb(), parse_mode="HTML"
-    )
-    await call.answer()
+# ─────────────────────────────────────────────
+# TIMEZONE
+# ─────────────────────────────────────────────
 
-
-@router.message(SettingsForm.balance)
-async def save_balance(message: Message, state: FSMContext, db_user_id: int):
-    try:
-        val = float(message.text.replace(",", "."))
-        if val <= 0:
-            raise ValueError
-        await upsert_setting(db_user_id, "starting_balance", val)
-        await state.clear()
-        s = await get_settings(db_user_id)
-        await message.answer(
-            _settings_text(), reply_markup=settings_inline_kb(s), parse_mode="HTML"
-        )
-    except ValueError:
-        await message.answer("⚠️ Noto'g'ri raqam. Qayta kiriting:", reply_markup=cancel_kb(), parse_mode="HTML")
-
-
-# ===== RATE =====
-@router.callback_query(F.data == "set_rate")
-async def ask_rate(call: CallbackQuery, state: FSMContext):
-    await state.set_state(SettingsForm.rate)
-    await call.message.edit_text(
-        "📊 Kunlik foiz kiriting (%):\n<i>Masalan: 13</i>",
-        reply_markup=cancel_kb(), parse_mode="HTML"
-    )
-    await call.answer()
-
-
-@router.message(SettingsForm.rate)
-async def save_rate(message: Message, state: FSMContext, db_user_id: int):
-    try:
-        val = float(message.text.replace(",", ".").replace("%", ""))
-        if val <= 0 or val > 100:
-            raise ValueError
-        await upsert_setting(db_user_id, "daily_profit_rate", val / 100)
-        await state.clear()
-        s = await get_settings(db_user_id)
-        await message.answer(
-            _settings_text(), reply_markup=settings_inline_kb(s), parse_mode="HTML"
-        )
-    except ValueError:
-        await message.answer("⚠️ 1 dan 100 gacha raqam kiriting:", reply_markup=cancel_kb(), parse_mode="HTML")
-
-
-# ===== EXTRA =====
-@router.callback_query(F.data == "set_extra")
-async def ask_extra(call: CallbackQuery, state: FSMContext):
-    await state.set_state(SettingsForm.extra)
-    await call.message.edit_text(
-        "➕ Qo'shimcha kunlik maqsad kiriting (USD):\n<i>Masalan: 10</i>",
-        reply_markup=cancel_kb(), parse_mode="HTML"
-    )
-    await call.answer()
-
-
-@router.message(SettingsForm.extra)
-async def save_extra(message: Message, state: FSMContext, db_user_id: int):
-    try:
-        val = float(message.text.replace(",", "."))
-        if val < 0:
-            raise ValueError
-        await upsert_setting(db_user_id, "extra_target", val)
-        await state.clear()
-        s = await get_settings(db_user_id)
-        await message.answer(
-            _settings_text(), reply_markup=settings_inline_kb(s), parse_mode="HTML"
-        )
-    except ValueError:
-        await message.answer("⚠️ Noto'g'ri raqam. Qayta kiriting:", reply_markup=cancel_kb(), parse_mode="HTML")
-
-
-# ===== WITHDRAWAL =====
-@router.callback_query(F.data == "set_withdrawal")
-async def ask_withdrawal(call: CallbackQuery, state: FSMContext):
-    await state.set_state(SettingsForm.withdrawal)
-    await call.message.edit_text(
-        "💸 Yechish summasi kiriting (USD):\n<i>0 kiritsangiz yechish bo'lmaydi</i>",
-        reply_markup=cancel_kb(), parse_mode="HTML"
-    )
-    await call.answer()
-
-
-@router.message(SettingsForm.withdrawal)
-async def save_withdrawal(message: Message, state: FSMContext, db_user_id: int):
-    try:
-        val = float(message.text.replace(",", "."))
-        if val < 0:
-            raise ValueError
-        await upsert_setting(db_user_id, "withdrawal_amount", val)
-        await state.clear()
-        s = await get_settings(db_user_id)
-        await message.answer(
-            _settings_text(), reply_markup=settings_inline_kb(s), parse_mode="HTML"
-        )
-    except ValueError:
-        await message.answer("⚠️ Noto'g'ri raqam. Qayta kiriting:", reply_markup=cancel_kb(), parse_mode="HTML")
-
-
-# ===== WITHDRAWAL EVERY =====
-@router.callback_query(F.data == "set_wevery")
-async def ask_wevery(call: CallbackQuery, state: FSMContext):
-    await state.set_state(SettingsForm.wevery)
-    await call.message.edit_text(
-        "📅 Har necha ish kunida yechish?\n<i>Masalan: 5 (har 5 ish kunda)</i>",
-        reply_markup=cancel_kb(), parse_mode="HTML"
-    )
-    await call.answer()
-
-
-@router.message(SettingsForm.wevery)
-async def save_wevery(message: Message, state: FSMContext, db_user_id: int):
-    try:
-        val = int(message.text.strip())
-        if val <= 0:
-            raise ValueError
-        await upsert_setting(db_user_id, "withdrawal_every", val)
-        await state.clear()
-        s = await get_settings(db_user_id)
-        await message.answer(
-            _settings_text(), reply_markup=settings_inline_kb(s), parse_mode="HTML"
-        )
-    except ValueError:
-        await message.answer("⚠️ Musbat butun son kiriting:", reply_markup=cancel_kb(), parse_mode="HTML")
-
-
-# ===== DAYS =====
-@router.callback_query(F.data == "set_days")
-async def ask_days(call: CallbackQuery, state: FSMContext):
-    await state.set_state(SettingsForm.days)
-    await call.message.edit_text(
-        "🗓 Strategiya ish kunlari sonini kiriting:\n<i>Masalan: 60 (shanba/yakshanba hisoblanmaydi)</i>",
-        reply_markup=cancel_kb(), parse_mode="HTML"
-    )
-    await call.answer()
-
-
-@router.message(SettingsForm.days)
-async def save_days(message: Message, state: FSMContext, db_user_id: int):
-    try:
-        val = int(message.text.strip())
-        if val <= 0:
-            raise ValueError
-        await upsert_setting(db_user_id, "total_days", val)
-        await state.clear()
-        s = await get_settings(db_user_id)
-        await message.answer(
-            _settings_text(), reply_markup=settings_inline_kb(s), parse_mode="HTML"
-        )
-    except ValueError:
-        await message.answer("⚠️ Musbat butun son kiriting:", reply_markup=cancel_kb(), parse_mode="HTML")
-
-
-# ===== START DATE =====
-@router.callback_query(F.data == "set_startdate")
-async def ask_startdate(call: CallbackQuery, state: FSMContext):
-    await state.set_state(SettingsForm.startdate)
-    await call.message.edit_text(
-        "📆 Boshlanish sanasini kiriting:\n<i>Format: 01.11.2025</i>",
-        reply_markup=cancel_kb(), parse_mode="HTML"
-    )
-    await call.answer()
-
-
-@router.message(SettingsForm.startdate)
-async def save_startdate(message: Message, state: FSMContext, db_user_id: int):
-    try:
-        from datetime import datetime
-        datetime.strptime(message.text.strip(), "%d.%m.%Y")
-        await upsert_setting(db_user_id, "start_date", message.text.strip())
-        await activate_strategy(db_user_id)
-        await state.clear()
-        s = await get_settings(db_user_id)
-        await message.answer(
-            _settings_text(), reply_markup=settings_inline_kb(s), parse_mode="HTML"
-        )
-    except ValueError:
-        await message.answer(
-            "⚠️ Format noto'g'ri. Qayta kiriting:\n<i>Masalan: 01.11.2025</i>",
-            reply_markup=cancel_kb(), parse_mode="HTML"
-        )
-
-
-# ===== TIMEZONE =====
 @router.callback_query(F.data == "set_timezone")
-async def ask_timezone(call: CallbackQuery):
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=tz, callback_data=f"tz_{tz}")] for tz in TIMEZONES
-    ] + [[InlineKeyboardButton(text="❌ Bekor qilish", callback_data="settings_open")]])
-    await call.message.edit_text("🌍 Timezoneni tanlang:", reply_markup=kb)
-    await call.answer()
+async def ask_timezone(callback: CallbackQuery, **kwargs) -> None:
+    """Timezone tanlash menyusi."""
+    await callback.message.edit_text(
+        "🌍 Timezone tanlang:",
+        reply_markup=timezone_kb(),
+    )
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("tz_"))
-async def save_timezone(call: CallbackQuery, db_user_id: int):
-    tz = call.data[3:]
-    await upsert_setting(db_user_id, "timezone", tz)
-    s = await get_settings(db_user_id)
-    await call.message.edit_text(
-        _settings_text(), reply_markup=settings_inline_kb(s), parse_mode="HTML"
-    )
-    await call.answer(f"✅ {tz} saqlandi")
-
-
-# ===== REMINDER =====
-@router.callback_query(F.data == "set_reminder")
-async def ask_reminder(call: CallbackQuery, state: FSMContext):
-    await state.set_state(SettingsForm.reminder)
-    await call.message.edit_text(
-        "⏰ Eslatma vaqtini kiriting:\n<i>Format: 08:00</i>",
-        reply_markup=cancel_kb(), parse_mode="HTML"
-    )
-    await call.answer()
-
-
-@router.message(SettingsForm.reminder)
-async def save_reminder(message: Message, state: FSMContext, db_user_id: int):
+async def save_timezone(callback: CallbackQuery, user_id: int, **kwargs) -> None:
+    """Timezone saqlash."""
+    tz = callback.data[3:]
     try:
-        from datetime import datetime
-        datetime.strptime(message.text.strip(), "%H:%M")
-        await upsert_setting(db_user_id, "reminder_time", message.text.strip())
-        await state.clear()
-        s = await get_settings(db_user_id)
-        await message.answer(
-            _settings_text(), reply_markup=settings_inline_kb(s), parse_mode="HTML"
-        )
-    except ValueError:
-        await message.answer(
-            "⚠️ Format noto'g'ri. Qayta kiriting:\n<i>Masalan: 08:00</i>",
-            reply_markup=cancel_kb(), parse_mode="HTML"
-        )
+        await save_settings(user_id, timezone=tz)
+        await _show_settings(callback.message, user_id)
+    except Exception as e:
+        logger.error(f"save_timezone xato [user_id={user_id}]: {e}")
+        await callback.answer("⚠️ Xato yuz berdi.", show_alert=True)
+    finally:
+        await callback.answer()
 
 
-# ===== EVENING REMINDER =====
+# ─────────────────────────────────────────────
+# KECHKI ESLATMA
+# ─────────────────────────────────────────────
+
 @router.callback_query(F.data == "set_evening_reminder")
-async def ask_evening_reminder(call: CallbackQuery, state: FSMContext):
-    await state.set_state(SettingsForm.evening_reminder)
-    await call.message.edit_text(
-        "🌙 Kechki eslatma vaqtini kiriting:\n"
-        "<i>Format: 22:00\n"
-        "Kiritmasangiz eslatma yuborilmaydi</i>",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🚫 O'chirish", callback_data="clear_evening_reminder")],
-            [InlineKeyboardButton(text="❌ Bekor qilish", callback_data="settings_open")]
-        ]),
-        parse_mode="HTML"
+async def ask_evening_reminder(callback: CallbackQuery, state: FSMContext, **kwargs) -> None:
+    """Kechki eslatma vaqti so'rash."""
+    await state.set_state(SettingsForm.waiting)
+    await state.update_data(**{SETTING_KEY: "set_evening_reminder_custom"})
+    await callback.message.edit_text(
+        "🌙 Kechki eslatma vaqti kiriting (HH:MM):",
+        reply_markup=evening_reminder_kb(),
     )
-    await call.answer()
+    await callback.answer()
 
 
 @router.callback_query(F.data == "clear_evening_reminder")
-async def clear_evening_reminder(call: CallbackQuery, db_user_id: int):
-    await upsert_setting(db_user_id, "evening_reminder_time", None)
-    s = await get_settings(db_user_id)
-    await call.message.edit_text(
-        _settings_text(), reply_markup=settings_inline_kb(s), parse_mode="HTML"
-    )
-    await call.answer("✅ Kechki eslatma o'chirildi")
-
-
-@router.message(SettingsForm.evening_reminder)
-async def save_evening_reminder(message: Message, state: FSMContext, db_user_id: int):
+async def clear_evening_reminder(callback: CallbackQuery, user_id: int, state: FSMContext, **kwargs) -> None:
+    """Kechki eslatmani o'chirish."""
+    await state.clear()
     try:
-        from datetime import datetime
-        datetime.strptime(message.text.strip(), "%H:%M")
-        await upsert_setting(db_user_id, "evening_reminder_time", message.text.strip())
-        await state.clear()
-        s = await get_settings(db_user_id)
-        await message.answer(
-            _settings_text(), reply_markup=settings_inline_kb(s), parse_mode="HTML"
-        )
-    except ValueError:
-        await message.answer(
-            "⚠️ Format noto'g'ri. Qayta kiriting:\n<i>Masalan: 22:00</i>",
-            reply_markup=cancel_kb(), parse_mode="HTML"
-        )
+        await save_settings(user_id, evening_reminder_time=None)
+        await _show_settings(callback.message, user_id)
+    except Exception as e:
+        logger.error(f"clear_evening_reminder xato [user_id={user_id}]: {e}")
+    finally:
+        await callback.answer()
 
 
-# ===== AUTO COMPLETE =====
-@router.callback_query(F.data == "set_auto_complete")
-async def ask_auto_complete(call: CallbackQuery, state: FSMContext):
-    await state.set_state(SettingsForm.auto_complete)
-    await call.message.edit_text(
-        "🔄 Avtomatik yakunlash vaqtini kiriting:\n"
-        "<i>Format: 23:59\n"
-        "Har kuni shu vaqtda yakunlanmagan kunlar avtomatik yakunlanadi\n\n"
-        "⚠️ Bu maydon majburiy — sozlamalarni saqlash uchun kiritish shart!</i>",
-        reply_markup=cancel_kb(),
-        parse_mode="HTML"
-    )
-    await call.answer()
+# ─────────────────────────────────────────────
+# BROKER
+# ─────────────────────────────────────────────
 
-
-@router.message(SettingsForm.auto_complete)
-async def save_auto_complete(message: Message, state: FSMContext, db_user_id: int):
-    try:
-        from datetime import datetime
-        datetime.strptime(message.text.strip(), "%H:%M")
-        await upsert_setting(db_user_id, "auto_complete_time", message.text.strip())
-        await state.clear()
-        s = await get_settings(db_user_id)
-        await message.answer(
-            _settings_text(), reply_markup=settings_inline_kb(s), parse_mode="HTML"
-        )
-    except ValueError:
-        await message.answer(
-            "⚠️ Format noto'g'ri. Qayta kiriting:\n<i>Masalan: 23:59</i>",
-            reply_markup=cancel_kb(), parse_mode="HTML"
-        )
-
-
-# ===== BROKER =====
 @router.callback_query(F.data == "set_broker")
-async def ask_broker(call: CallbackQuery, state: FSMContext):
-    await state.set_state(SettingsForm.broker)
-    await call.message.edit_text(
-        "🏦 Broker nomini kiriting:\n"
-        "<i>Masalan: Exness, RoboForex, Alpari\n"
-        "Ixtiyoriy — bo'sh qoldirish mumkin</i>",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🚫 O'chirish", callback_data="clear_broker")],
-            [InlineKeyboardButton(text="❌ Bekor qilish", callback_data="settings_open")]
-        ]),
-        parse_mode="HTML"
+async def ask_broker(callback: CallbackQuery, state: FSMContext, **kwargs) -> None:
+    """Broker nomi so'rash."""
+    await state.set_state(SettingsForm.waiting)
+    await state.update_data(**{SETTING_KEY: "set_broker_custom"})
+    await callback.message.edit_text(
+        "🏦 Broker nomini kiriting:",
+        reply_markup=broker_kb(),
     )
-    await call.answer()
+    await callback.answer()
 
 
 @router.callback_query(F.data == "clear_broker")
-async def clear_broker(call: CallbackQuery, db_user_id: int):
-    await upsert_setting(db_user_id, "broker_name", None)
-    s = await get_settings(db_user_id)
-    await call.message.edit_text(
-        _settings_text(), reply_markup=settings_inline_kb(s), parse_mode="HTML"
-    )
-    await call.answer("✅ Broker o'chirildi")
-
-
-@router.message(SettingsForm.broker)
-async def save_broker(message: Message, state: FSMContext, db_user_id: int):
-    if not message.text:
-        await message.answer("⚠️ Matn kiriting:", reply_markup=cancel_kb(), parse_mode="HTML")
-        return
-    broker = message.text.strip()
-    if len(broker) > 50:
-        await message.answer("⚠️ Broker nomi 50 belgidan oshmasin:", reply_markup=cancel_kb(), parse_mode="HTML")
-        return
-    await upsert_setting(db_user_id, "broker_name", broker)
+async def clear_broker(callback: CallbackQuery, user_id: int, state: FSMContext, **kwargs) -> None:
+    """Broker nomini o'chirish."""
     await state.clear()
-    s = await get_settings(db_user_id)
-    await message.answer(
-        _settings_text(), reply_markup=settings_inline_kb(s), parse_mode="HTML"
-    )
+    try:
+        await save_settings(user_id, broker_name=None)
+        await _show_settings(callback.message, user_id)
+    except Exception as e:
+        logger.error(f"clear_broker xato [user_id={user_id}]: {e}")
+    finally:
+        await callback.answer()
 
 
-# ===== YORDAMCHI =====
-def _format_rest_days(rest_days_str: str) -> str:
-    DAY_NAMES = {
-        "1": "Du", "2": "Se", "3": "Cho",
-        "4": "Pa", "5": "Ju", "6": "Sha", "7": "Ya"
-    }
-    if not rest_days_str:
-        return "Yo'q"
-    days = [DAY_NAMES.get(d.strip(), d.strip()) for d in rest_days_str.split(",")]
-    return ", ".join(days)
-
-
-# ===== REST DAYS =====
-DAY_BUTTONS = [
-    ("1", "Du"), ("2", "Se"), ("3", "Cho"),
-    ("4", "Pa"), ("5", "Ju"), ("6", "Sha"), ("7", "Ya")
-]
-
-
-def _rest_days_kb(selected: set) -> InlineKeyboardMarkup:
-    rows = []
-    row = []
-    for code, name in DAY_BUTTONS:
-        mark = "✅" if code in selected else "☐"
-        row.append(InlineKeyboardButton(
-            text=f"{mark} {name}",
-            callback_data=f"rd_toggle_{code}"
-        ))
-        if len(row) == 4:
-            rows.append(row)
-            row = []
-    if row:
-        rows.append(row)
-    rows.append([
-        InlineKeyboardButton(text="💾 Saqlash", callback_data="rd_save"),
-        InlineKeyboardButton(text="❌ Bekor", callback_data="settings_open")
-    ])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
+# ─────────────────────────────────────────────
+# DAM OLISH KUNLARI
+# ─────────────────────────────────────────────
 
 @router.callback_query(F.data == "set_rest_days")
-async def ask_rest_days(call: CallbackQuery, state: FSMContext, db_user_id: int):
-    s = await get_settings(db_user_id)
-    rest_str = s.get("rest_days", "6,7") if s else "6,7"
-    selected = set(rest_str.split(",")) if rest_str else {"6", "7"}
-    await state.update_data(rest_selected=list(selected))
-    await call.message.edit_text(
-        "🗓 <b>Dam olish kunlarini tanlang:</b>\n"
-        "Bosing — qo'shiladi/olib tashlanadi",
-        reply_markup=_rest_days_kb(selected),
-        parse_mode="HTML"
+async def ask_rest_days(callback: CallbackQuery, user_id: int, **kwargs) -> None:
+    """Dam olish kunlari menyusi."""
+    settings = await get_settings(user_id)
+    current = settings.get("rest_days", "6,7") if settings else "6,7"
+    await callback.message.edit_text(
+        "🗓 Dam olish kunlarini tanlang:",
+        reply_markup=rest_days_kb(current or ""),
     )
-    await call.answer()
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("rd_toggle_"))
-async def toggle_rest_day(call: CallbackQuery, state: FSMContext):
-    code = call.data.split("_")[2]
-    data = await state.get_data()
-    selected = set(data.get("rest_selected", ["6", "7"]))
+async def toggle_rest_day(callback: CallbackQuery, user_id: int, **kwargs) -> None:
+    """Dam olish kunini yoqish/o'chirish."""
+    code = int(callback.data.split("_")[-1])
+    settings = await get_settings(user_id)
+    current_str = settings.get("rest_days", "") if settings else ""
+
+    selected = set()
+    if current_str:
+        selected = {int(x.strip()) for x in current_str.split(",") if x.strip().isdigit()}
+
     if code in selected:
         selected.discard(code)
     else:
         selected.add(code)
-    await state.update_data(rest_selected=list(selected))
-    await call.message.edit_reply_markup(reply_markup=_rest_days_kb(selected))
-    await call.answer()
+
+    new_val = ",".join(str(d) for d in sorted(selected))
+
+    # Vaqtinchalik state da saqlaymiz (hali DB ga emas)
+    # Callback message dagi tugmalarni yangilaymiz
+    await callback.message.edit_reply_markup(
+        reply_markup=rest_days_kb(new_val)
+    )
+
+    # ⚠️ Diqqat: toggle bosimda vaqtinchalik qiymat
+    # rd_save bosilganda saqlash uchun callbackda current ni o'qiymiz
+    # Shu sababli hozircha DB ga yozamiz (har toggle da)
+    await save_settings(user_id, rest_days=new_val)
+    await callback.answer()
 
 
 @router.callback_query(F.data == "rd_save")
-async def save_rest_days(call: CallbackQuery, state: FSMContext, db_user_id: int):
-    data = await state.get_data()
-    selected = sorted(data.get("rest_selected", ["6", "7"]))
-    rest_str = ",".join(selected)
-    await upsert_setting(db_user_id, "rest_days", rest_str)
-    await state.clear()
-    s = await get_settings(db_user_id)
-    await call.message.edit_text(
-        _settings_text(), reply_markup=settings_inline_kb(s), parse_mode="HTML"
-    )
-    await call.answer(f"✅ Dam olish kunlari saqlandi: {_format_rest_days(rest_str)}")
+async def save_rest_days(callback: CallbackQuery, user_id: int, **kwargs) -> None:
+    """Dam olish kunlarini saqlash."""
+    try:
+        await _show_settings(callback.message, user_id)
+    except Exception as e:
+        logger.error(f"save_rest_days xato [user_id={user_id}]: {e}")
+    finally:
+        await callback.answer("✅ Saqlandi!")
+
+
+# ─────────────────────────────────────────────
+# SAQLASH VA YOPISH
+# ─────────────────────────────────────────────
+
+@router.callback_query(F.data == "settings_save")
+async def settings_save(callback: CallbackQuery, user_id: int, **kwargs) -> None:
+    """Sozlamalarni saqlash va yopish."""
+    try:
+        await _check_and_activate(user_id)
+        settings = await get_settings(user_id)
+        is_active = settings.get("is_active") if settings else False
+
+        if is_active:
+            await callback.message.edit_text(
+                "✅ <b>Sozlamalar saqlandi!</b>\n\n"
+                "Endi 📊 Bugungi reja dan boshlashingiz mumkin.",
+                parse_mode="HTML",
+            )
+        else:
+            await callback.message.edit_text(
+                "⚠️ <b>Sozlamalar to'liq emas!</b>\n\n"
+                "Kamida quyidagilar kerak:\n"
+                "• 💰 Boshlang'ich balans\n"
+                "• 📆 Boshlanish sanasi\n"
+                "• 🗓 Kun soni",
+                parse_mode="HTML",
+            )
+    except Exception as e:
+        logger.error(f"settings_save xato [user_id={user_id}]: {e}")
+        await callback.answer("⚠️ Xato yuz berdi.", show_alert=True)
+    finally:
+        await callback.answer()

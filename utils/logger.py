@@ -1,18 +1,31 @@
+"""
+Logging konfiguratsiyasi.
+Barcha modullarda shu logger ishlatiladi.
+"""
+
 import logging
-import os
-from datetime import datetime
+import sys
+from config import LOG_LEVEL
 
-os.makedirs("logs", exist_ok=True)
 
-log_filename = f"logs/bot_{datetime.now().strftime('%Y-%m-%d')}.log"
+def setup_logger() -> None:
+    """
+    Asosiy logger ni sozlaydi.
+    main.py da bir marta chaqiriladi.
+    """
+    log_format = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    date_format = "%Y-%m-%d %H:%M:%S"
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    handlers=[
-        logging.FileHandler(log_filename, encoding="utf-8"),
-        logging.StreamHandler()
-    ]
-)
+    logging.basicConfig(
+        level=getattr(logging, LOG_LEVEL.upper(), logging.INFO),
+        format=log_format,
+        datefmt=date_format,
+        handlers=[
+            logging.StreamHandler(sys.stdout),
+        ],
+    )
 
-logger = logging.getLogger("trade_planner")
+    # Shovqinli kutubxonalarni sokinlashtirish
+    logging.getLogger("aiogram").setLevel(logging.WARNING)
+    logging.getLogger("asyncio").setLevel(logging.WARNING)
+    logging.getLogger("apscheduler").setLevel(logging.WARNING)

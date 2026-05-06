@@ -1,43 +1,75 @@
+"""
+Muhit o'zgaruvchilari (environment variables) konfiguratsiyasi.
+.env fayldan yoki Railway environment dan o'qiladi.
+"""
+
 import os
 from dotenv import load_dotenv
-from utils.logger import logger
 
+# .env faylni yuklash (local development uchun)
 load_dotenv()
 
 
-def validate_config():
-    errors = []
-
-    token = os.getenv("BOT_TOKEN")
-    if not token:
-        errors.append("BOT_TOKEN topilmadi!")
-    elif len(token) < 30:
-        errors.append("BOT_TOKEN noto'g'ri formatda!")
-
-    db_url = os.getenv("DATABASE_URL")
-    if not db_url:
-        errors.append("DATABASE_URL topilmadi!")
-    elif not db_url.startswith("postgresql"):
-        errors.append("DATABASE_URL postgresql:// bilan boshlanishi kerak!")
-
-    if errors:
-        for e in errors:
-            logger.critical(f"Config xatosi: {e}")
-        raise ValueError("Config tekshiruvidan o'tmadi:\n" + "\n".join(errors))
-
-    logger.info("Config tekshiruvi muvaffaqiyatli o'tdi.")
-    return token, db_url
+def _require(key: str) -> str:
+    """
+    Majburiy env variable ni qaytaradi.
+    Topilmasa — tushunarli xato chiqaradi.
+    """
+    value = os.getenv(key)
+    if not value:
+        raise ValueError(f"Muhit o'zgaruvchisi topilmadi: {key}")
+    return value
 
 
-BOT_TOKEN, DATABASE_URL = validate_config()
+# ─────────────────────────────────────────────
+# 🤖 BOT
+# ─────────────────────────────────────────────
 
-# Railway PostgreSQL URL formatini tuzatish
-if DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+# Telegram bot token (@BotFather dan olinadi)
+BOT_TOKEN: str = _require("BOT_TOKEN")
 
+# WebApp URL (Railway webapp service URL)
+# Agar yo'q bo'lsa — WebApp tugmasi ko'rsatilmaydi
+WEBAPP_URL: str = os.getenv("WEBAPP_URL", "")
 
-# Gemini API — MT5 skrinshot tahlili uchun (ixtiyoriy)
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+# ─────────────────────────────────────────────
+# 🗄️ DATABASE
+# ─────────────────────────────────────────────
 
-CHARTS_DIR = "charts"
-os.makedirs(CHARTS_DIR, exist_ok=True)
+# PostgreSQL ulanish URL
+# Format: postgresql://user:password@host:port/dbname
+DATABASE_URL: str = _require("DATABASE_URL")
+
+# ─────────────────────────────────────────────
+# 🤖 GEMINI API
+# ─────────────────────────────────────────────
+
+# Google Gemini API key (MT5 screenshot tahlili uchun)
+# Agar yo'q bo'lsa — MT5 screenshot funksiyasi o'chiriladi
+GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+
+# ─────────────────────────────────────────────
+# 🌍 DEFAULTS
+# ─────────────────────────────────────────────
+
+# Default timezone (yangi foydalanuvchilar uchun)
+DEFAULT_TIMEZONE: str = "Asia/Tashkent"
+
+# Default ertalabki eslatma vaqti
+DEFAULT_REMINDER_TIME: str = "08:00"
+
+# Default avtomatik yakunlash vaqti
+DEFAULT_AUTO_COMPLETE_TIME: str = "23:30"
+
+# Default dam olish kunlari (6=Shanba, 7=Yakshanba)
+DEFAULT_REST_DAYS: str = "6,7"
+
+# ─────────────────────────────────────────────
+# ⚙️ APP
+# ─────────────────────────────────────────────
+
+# WebApp server porti (Railway avtomatik beradi)
+PORT: int = int(os.getenv("PORT", "8000"))
+
+# Log darajasi
+LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")

@@ -1,83 +1,166 @@
 <!DOCTYPE html>
 <html lang="uz">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<meta name="theme-color" content="#0a0a0f">
-<title>Trade Planner</title>
-<link rel="stylesheet" href="/static/css/style.css">
-<script src="https://telegram.org/js/telegram-web-app.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+  <title>Trade Planner</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link rel="stylesheet" href="/static/css/style.css"/>
 </head>
 <body>
+<div class="app">
 
-<!-- HEADER -->
-<div class="header">
-  <div class="header-logo">Trade Planner</div>
-  <div class="header-badge" id="header-badge">●  loading</div>
-</div>
-
-<!-- TABS -->
-<div class="tabs">
-  <button class="tab active" data-page="page-overview">Overview</button>
-  <button class="tab" data-page="page-stats">Statistika</button>
-  <button class="tab" data-page="page-chart">Grafik</button>
-</div>
-
-<!-- PAGE: OVERVIEW -->
-<div class="page active" id="page-overview">
-  <div id="overview-content">
-    <div class="loading">
-      <div class="spinner"></div>
-      Yuklanmoqda...
+  <!-- Header -->
+  <div class="header">
+    <div class="header-top">
+      <h2>📊 Trade Planner</h2>
+      <span class="header-badge">DASHBOARD</span>
+    </div>
+    <div class="tabs">
+      <button class="tab active" data-tab="overview">Overview</button>
+      <button class="tab" data-tab="journal">Jurnal</button>
+      <button class="tab" data-tab="chart">Grafik</button>
     </div>
   </div>
-</div>
 
-<!-- PAGE: STATS -->
-<div class="page" id="page-stats">
-  <div class="period-tabs">
-    <button class="period-tab" data-period="daily">Bugun</button>
-    <button class="period-tab" data-period="weekly">Hafta</button>
-    <button class="period-tab" data-period="monthly">Oy</button>
-    <button class="period-tab active" data-period="strategy">Strategiya</button>
+  <!-- ── Overview Tab ── -->
+  <div class="tab-content active" id="tab-overview">
+
+    <!-- Balans -->
+    <div class="card">
+      <div class="card-title">💰 Balans</div>
+      <div class="balance-row">
+        <div class="balance-item">
+          <span class="label">Haqiqiy</span>
+          <span class="value actual" id="actual-balance">—</span>
+        </div>
+        <div class="balance-divider"></div>
+        <div class="balance-item">
+          <span class="label">Rejalangan</span>
+          <span class="value planned" id="planned-balance">—</span>
+        </div>
+      </div>
+      <div class="balance-diff">
+        <span class="diff-label">Farq (haqiqiy − reja)</span>
+        <span class="diff-value" id="balance-diff-val">—</span>
+      </div>
+    </div>
+
+    <!-- Progress -->
+    <div class="card">
+      <div class="card-title">📈 Progress</div>
+      <div class="progress-row">
+        <span class="progress-label">Kunlar</span>
+        <div class="progress-bar">
+          <div class="progress-fill blue" id="progress-days"></div>
+        </div>
+        <span class="progress-val" id="progress-days-text">0/0</span>
+      </div>
+      <div class="progress-row">
+        <span class="progress-label">Maqsad</span>
+        <div class="progress-bar">
+          <div class="progress-fill green" id="progress-balance"></div>
+        </div>
+        <span class="progress-val" id="progress-balance-text">0%</span>
+      </div>
+    </div>
+
+    <!-- Natijalar -->
+    <div class="card">
+      <div class="card-title">🎯 Natijalar</div>
+      <div class="stats-grid">
+        <div class="stat-item">
+          <span class="stat-label">Jami PnL</span>
+          <span class="stat-value" id="total-pnl">—</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">Win Rate</span>
+          <span class="stat-value gold" id="win-rate">—</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">✅ Bajarildi</span>
+          <span class="stat-value green" id="win-days">—</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">❌ Rollover</span>
+          <span class="stat-value red" id="loss-days">—</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sozlamalar -->
+    <div class="card">
+      <div class="card-title">⚙️ Sozlamalar</div>
+      <div class="setting-row">
+        <span class="s-label">Boshlang'ich balans</span>
+        <span class="s-value" id="s-starting">—</span>
+      </div>
+      <div class="setting-row">
+        <span class="s-label">Kunlik foiz</span>
+        <span class="s-value" id="s-rate">—</span>
+      </div>
+      <div class="setting-row">
+        <span class="s-label">Kun soni</span>
+        <span class="s-value" id="s-days">—</span>
+      </div>
+      <div class="setting-row">
+        <span class="s-label">Boshlanish sanasi</span>
+        <span class="s-value" id="s-start">—</span>
+      </div>
+      <div class="setting-row">
+        <span class="s-label">Broker</span>
+        <span class="s-value" id="s-broker">—</span>
+      </div>
+    </div>
+
   </div>
-  <div id="stats-content">
-    <div class="loading">
-      <div class="spinner"></div>
-      Yuklanmoqda...
+
+  <!-- ── Journal Tab ── -->
+  <div class="tab-content" id="tab-journal">
+    <div class="card">
+      <div class="card-title">📋 Kunlik jurnal</div>
+      <div class="table-wrapper">
+        <table class="journal-table">
+          <thead>
+            <tr>
+              <th>Kun</th>
+              <th>Sana</th>
+              <th>Maqsad</th>
+              <th>PnL</th>
+              <th>Holat</th>
+            </tr>
+          </thead>
+          <tbody id="journal-tbody">
+            <tr><td colspan="5">
+              <div class="loading-state">
+                <div class="spinner"></div>
+              </div>
+            </td></tr>
+          </tbody>
+        </table>
+      </div>
     </div>
   </div>
-</div>
 
-<!-- PAGE: CHART -->
-<div class="page" id="page-chart">
-  <div id="chart-content">
-    <div class="loading">
-      <div class="spinner"></div>
-      Yuklanmoqda...
+  <!-- ── Chart Tab ── -->
+  <div class="tab-content" id="tab-chart">
+    <div class="card">
+      <div class="card-title">📈 Balans o'sishi</div>
+      <div id="chart-balance-wrap">
+        <div class="loading-state"><div class="spinner"></div></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">📊 Kunlik PnL</div>
+      <div id="chart-pnl-wrap">
+        <div class="loading-state"><div class="spinner"></div></div>
+      </div>
     </div>
   </div>
+
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="/static/js/app.js"></script>
-<script>
-  // Header badge yangilash
-  async function updateBadge() {
-    try {
-      const data = await apiFetch('/api/summary');
-      const d = document.getElementById('header-badge');
-      const days = data.summary.completed_days;
-      const total = data.summary.total_days;
-      d.textContent = `● ${days}/${total} kun`;
-      d.style.color = 'var(--green)';
-    } catch(e) {
-      document.getElementById('header-badge').textContent = '● offline';
-    }
-  }
-  document.addEventListener('DOMContentLoaded', () => {
-    setTimeout(updateBadge, 500);
-  });
-</script>
 </body>
 </html>

@@ -1,427 +1,313 @@
-/* ===================================
-   TRADE PLANNER WEBAPP
-   Main JavaScript
-   =================================== */
+/**
+ * Trade Planner WebApp — asosiy JavaScript
+ * Telegram WebApp API orqali ishlaydi.
+ */
 
-'use strict';
-
-// ===== TELEGRAM WEBAPP INIT =====
 const tg = window.Telegram?.WebApp;
-if (tg) {
-  tg.ready();
-  tg.expand();
-  tg.setHeaderColor('#0a0a0f');
-  tg.setBackgroundColor('#0a0a0f');
-}
+if (tg) { tg.ready(); tg.expand(); }
 
-// ===== STATE =====
-const State = {
-  period: 'strategy',
-  summaryData: null,
-  journalsData: null,
-  progressionData: null,
-  loading: false,
-};
+const telegramId = tg?.initDataUnsafe?.user?.id || null;
 
-// ===== API =====
-const API_BASE = window.location.origin;
+// ─── Yordamchilar ───────────────────────────
 
-async function apiFetch(path) {
-  const headers = {};
-  if (tg?.initData) {
-    headers['X-Telegram-Init-Data'] = tg.initData;
-  }
-  const res = await fetch(`${API_BASE}${path}`, { headers });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || 'API xato');
-  }
-  return res.json();
-}
-
-// ===== UTILS =====
-function fmt(val, decimals = 2) {
-  if (val === null || val === undefined) return '—';
-  return Number(val).toFixed(decimals);
-}
-
-function fmtSign(val) {
-  if (val === null || val === undefined) return '—';
-  const n = Number(val);
-  return (n >= 0 ? '+' : '') + n.toFixed(2);
-}
-
-function pnlClass(val) {
-  const n = Number(val);
-  if (n > 0) return 'pos';
-  if (n < 0) return 'neg';
-  return 'zero';
-}
-
-function pnlEmoji(val) {
-  const n = Number(val);
-  return n >= 0 ? '🟢' : '🔴';
-}
-
-// ===== TABS =====
-function initTabs() {
-  document.querySelectorAll('.tab').forEach(tab => {
-    tab.addEventListener('click', () => {
-      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-      document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-      tab.classList.add('active');
-      const pageId = tab.dataset.page;
-      document.getElementById(pageId).classList.add('active');
-      onPageActivated(pageId);
-    });
-  });
-
-  document.querySelectorAll('.period-tab').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('.period-tab').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      State.period = btn.dataset.period;
-      loadStats();
-    });
-  });
-}
-
-function onPageActivated(pageId) {
-  if (pageId === 'page-overview' && !State.summaryData) loadOverview();
-  if (pageId === 'page-stats') loadStats();
-  if (pageId === 'page-chart') loadChart();
-}
-
-// ===== OVERVIEW PAGE =====
-async function loadOverview() {
-  showLoading('overview-content');
+async function apiFetch(endpoint) {
+  if (!telegramId) return null;
   try {
-    const data = await apiFetch('/api/summary');
-    State.summaryData = data;
-    renderOverview(data);
+    const res = await fetch(`${endpoint}?telegram_id=${telegramId}`);
+    if (!res.ok) return null;
+    return await res.json();
   } catch (e) {
-    showError('overview-content', e.message);
+    console.error(`apiFetch [${endpoint}]:`, e);
+    return null;
   }
 }
 
-function renderOverview(data) {
-  const { summary, real_balance, settings } = data;
-  const perf = Math.min(100, Math.max(0, summary.performance_pct));
-  const totalPnl = summary.total_actual_profit;
-  const pnlC = totalPnl >= 0 ? 'green' : 'red';
-
-  document.getElementById('overview-content').innerHTML = `
-    <div class="summary-grid">
-      <div class="stat-box blue">
-        <div class="stat-label">Haqiqiy balans</div>
-        <div class="stat-value blue">$${fmt(real_balance)}</div>
-        <div class="stat-sub">Rejalangan: $${fmt(settings.starting_balance)}</div>
-      </div>
-      <div class="stat-box ${pnlC}">
-        <div class="stat-label">Jami PnL</div>
-        <div class="stat-value ${pnlC}">${fmtSign(totalPnl)}$</div>
-        <div class="stat-sub">Maqsad: $${fmt(summary.total_expected_profit)}</div>
-      </div>
-      <div class="stat-box green">
-        <div class="stat-label">Bajarilgan</div>
-        <div class="stat-value green">${summary.completed_days}</div>
-        <div class="stat-sub">/ ${summary.total_days} kun</div>
-      </div>
-      <div class="stat-box amber">
-        <div class="stat-label">Samaradorlik</div>
-        <div class="stat-value amber">${fmt(summary.performance_pct, 1)}%</div>
-        <div class="stat-sub">Yechilgan: $${fmt(summary.total_withdrawn)}</div>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="progress-wrap">
-        <div class="progress-label">
-          <span>Strategiya davri</span>
-          <span>${summary.completed_days} / ${summary.total_days}</span>
-        </div>
-        <div class="progress-bar">
-          <div class="progress-fill" style="width:${(summary.completed_days/summary.total_days*100).toFixed(1)}%"></div>
-        </div>
-      </div>
-      <div class="divider"></div>
-      <div class="progress-wrap">
-        <div class="progress-label">
-          <span>Maqsad bajarish</span>
-          <span>${fmt(summary.performance_pct, 1)}%</span>
-        </div>
-        <div class="progress-bar">
-          <div class="progress-fill" style="width:${perf}%"></div>
-        </div>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="card-title">Sozlamalar</div>
-      <div class="info-row">
-        <span class="info-label">Boshlang'ich balans</span>
-        <span class="info-value">$${fmt(settings.starting_balance)}</span>
-      </div>
-      <div class="info-row">
-        <span class="info-label">Kunlik foiz</span>
-        <span class="info-value">${(settings.daily_profit_rate * 100).toFixed(0)}%</span>
-      </div>
-      <div class="info-row">
-        <span class="info-label">Boshlanish sanasi</span>
-        <span class="info-value">${settings.start_date || '—'}</span>
-      </div>
-      ${settings.broker_name ? `
-      <div class="info-row">
-        <span class="info-label">Broker</span>
-        <span class="info-value">${settings.broker_name}</span>
-      </div>` : ''}
-    </div>
-  `;
+function fmtMoney(val, showSign = true) {
+  if (val == null || val === '') return '—';
+  const n = Number(val);
+  const sign = showSign ? (n >= 0 ? '+' : '') : '';
+  return `${sign}${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}$`;
 }
 
-// ===== STATS PAGE =====
-async function loadStats() {
-  showLoading('stats-content');
-  try {
-    const data = await apiFetch(`/api/journals?period=${State.period}`);
-    State.journalsData = data.journals;
-    renderStats(data.journals);
-  } catch (e) {
-    showError('stats-content', e.message);
-  }
+function setEl(id, text) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = text ?? '—';
 }
 
-function renderStats(journals) {
-  if (!journals.length) {
-    document.getElementById('stats-content').innerHTML = `
-      <div class="empty">
-        <div class="empty-icon">📊</div>
-        Hali savdo ma'lumotlari yo'q
-      </div>`;
-    return;
+function setProgress(fillId, textId, percent, label, colorClass = '') {
+  const fill = document.getElementById(fillId);
+  const text = document.getElementById(textId);
+  const clamped = Math.min(Math.max(Number(percent) || 0, 0), 100);
+  if (fill) {
+    fill.style.width = `${clamped}%`;
+    if (colorClass) fill.className = `progress-fill ${colorClass}`;
   }
-
-  const totalPnl = journals.reduce((s, j) => s + j.actual_pnl, 0);
-  const completed = journals.filter(j => j.is_completed);
-  const winning = completed.filter(j => j.actual_pnl > 0).length;
-  const losing = completed.filter(j => j.actual_pnl < 0).length;
-  const totalTarget = journals.reduce((s, j) => s + j.target_profit + j.extra_target + j.carry_over_amount, 0);
-  const perf = totalTarget > 0 ? (totalPnl / totalTarget * 100) : 0;
-
-  const rows = journals.map(j => {
-    const isRolled = j.is_rolled_over;
-    const status = j.is_completed
-      ? (isRolled ? 'status-rolled' : 'status-done')
-      : 'status-pending';
-    const target = j.target_profit + j.extra_target + j.carry_over_amount;
-    const pnlStr = j.is_completed ? fmtSign(j.actual_pnl) + '$' : '—';
-    return `
-      <div class="journal-row${isRolled ? ' rolled' : ''}">
-        <span class="journal-day">${j.day_number}</span>
-        <span class="journal-date">${j.date}</span>
-        <span class="journal-target">+${fmt(target)}$</span>
-        <span class="journal-pnl ${j.is_completed ? pnlClass(j.actual_pnl) : 'zero'}">${pnlStr}</span>
-        <span class="journal-status ${status}"></span>
-      </div>`;
-  }).join('');
-
-  document.getElementById('stats-content').innerHTML = `
-    <div class="summary-grid" style="margin-bottom:12px">
-      <div class="stat-box ${totalPnl >= 0 ? 'green' : 'red'}">
-        <div class="stat-label">Jami PnL</div>
-        <div class="stat-value ${totalPnl >= 0 ? 'green' : 'red'}">${fmtSign(totalPnl)}$</div>
-      </div>
-      <div class="stat-box amber">
-        <div class="stat-label">Samaradorlik</div>
-        <div class="stat-value amber">${fmt(perf, 1)}%</div>
-      </div>
-      <div class="stat-box green">
-        <div class="stat-label">Foydali kunlar</div>
-        <div class="stat-value green">${winning}</div>
-      </div>
-      <div class="stat-box red">
-        <div class="stat-label">Zararli kunlar</div>
-        <div class="stat-value red">${losing}</div>
-      </div>
-    </div>
-    <div class="card-title" style="margin-bottom:8px">Kunlik jurnal</div>
-    <div class="journal-list">${rows}</div>`;
+  if (text) text.textContent = label;
 }
 
-// ===== CHART PAGE =====
-async function loadChart() {
-  if (!window.Chart) {
-    showError('chart-content', 'Chart.js yuklanmadi');
-    return;
-  }
-  showLoading('chart-content');
-  try {
-    const data = await apiFetch('/api/progression');
-    State.progressionData = data.progression;
-    renderCharts(data.progression);
-  } catch (e) {
-    showError('chart-content', e.message);
-  }
+function showLoading(id) {
+  const el = document.getElementById(id);
+  if (el) el.innerHTML = `<div class="loading-state"><div class="spinner"></div><span>Yuklanmoqda...</span></div>`;
 }
 
-function renderCharts(progression) {
-  const completed = progression.filter(d => d.is_completed);
-  if (!completed.length) {
-    document.getElementById('chart-content').innerHTML = `
-      <div class="empty">
-        <div class="empty-icon">📈</div>
-        Grafik uchun ma'lumot yetarli emas.<br>Avval savdo kiriting va kunni yakunlang.
-      </div>`;
-    return;
-  }
+function showError(id, msg = 'Ma\'lumot topilmadi') {
+  const el = document.getElementById(id);
+  if (el) el.innerHTML = `<div class="empty-state">${msg}</div>`;
+}
 
-  document.getElementById('chart-content').innerHTML = `
-    <div class="card">
-      <div class="card-title">PnL — Kunlik</div>
-      <div class="chart-wrap"><canvas id="pnlChart"></canvas></div>
-    </div>
-    <div class="card">
-      <div class="card-title">Balans o'sishi</div>
-      <div class="chart-wrap"><canvas id="balanceChart"></canvas></div>
-    </div>`;
+// ─── Tabs ────────────────────────────────────
 
-  const labels = completed.map(d => d.date.slice(5));
-  const pnls = completed.map(d => d.actual_pnl || 0);
-  const targets = completed.map(d => d.target_profit + d.extra_target + d.carry_over);
+const tabLoaded = { overview: false, journal: false, chart: false };
 
-  // PnL Chart
-  const pnlColors = completed.map(d => {
-    if (d.is_rolled_over) return 'rgba(255,184,48,0.85)';
-    return (d.actual_pnl || 0) >= 0 ? 'rgba(0,229,160,0.85)' : 'rgba(255,77,109,0.85)';
+document.querySelectorAll('.tab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const name = btn.dataset.tab;
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById(`tab-${name}`)?.classList.add('active');
+
+    if (name === 'journal' && !tabLoaded.journal) { loadJournal(); tabLoaded.journal = true; }
+    if (name === 'chart'   && !tabLoaded.chart)   { loadCharts();  tabLoaded.chart   = true; }
   });
-
-  new Chart(document.getElementById('pnlChart'), {
-    type: 'bar',
-    data: {
-      labels,
-      datasets: [
-        {
-          label: 'PnL',
-          data: pnls,
-          backgroundColor: pnlColors,
-          borderRadius: 4,
-          order: 2,
-        },
-        {
-          label: 'Maqsad',
-          data: targets,
-          type: 'line',
-          borderColor: '#4d9fff',
-          borderWidth: 2,
-          borderDash: [4, 3],
-          pointRadius: 3,
-          pointBackgroundColor: '#4d9fff',
-          fill: false,
-          order: 1,
-        }
-      ]
-    },
-    options: _chartOptions('USD'),
-  });
-
-  // Balance Chart
-  const expectedBalances = progression.map(d => d.final_balance);
-  const actualBalances = [];
-  let runningBalance = progression[0]?.start_balance || 0;
-  progression.forEach(d => {
-    if (d.is_completed && d.actual_pnl !== null) {
-      runningBalance = d.start_balance + d.actual_pnl;
-      actualBalances.push({ x: d.date.slice(5), y: runningBalance });
-    }
-  });
-
-  new Chart(document.getElementById('balanceChart'), {
-    type: 'line',
-    data: {
-      labels: progression.map(d => d.date.slice(5)),
-      datasets: [
-        {
-          label: 'Rejalangan',
-          data: expectedBalances,
-          borderColor: '#4d9fff',
-          borderWidth: 2,
-          borderDash: [4, 3],
-          pointRadius: 2,
-          fill: false,
-        },
-        {
-          label: 'Haqiqiy',
-          data: actualBalances.map(d => d.y),
-          borderColor: '#00e5a0',
-          borderWidth: 2.5,
-          pointRadius: 3,
-          pointBackgroundColor: '#00e5a0',
-          fill: {
-            target: 'origin',
-            above: 'rgba(0,229,160,0.06)',
-          },
-        }
-      ]
-    },
-    options: _chartOptions('USD'),
-  });
-}
-
-function _chartOptions(yLabel) {
-  return {
-    responsive: true,
-    maintainAspectRatio: false,
-    interaction: { mode: 'index', intersect: false },
-    plugins: {
-      legend: {
-        labels: { color: '#9890b0', font: { family: 'Space Mono', size: 10 }, boxWidth: 12 }
-      },
-      tooltip: {
-        backgroundColor: '#1a1a24',
-        borderColor: '#2a2a38',
-        borderWidth: 1,
-        titleColor: '#9890b0',
-        bodyColor: '#e8e6f0',
-        titleFont: { family: 'Space Mono', size: 10 },
-        bodyFont: { family: 'Space Mono', size: 11 },
-        callbacks: {
-          label: ctx => ` ${ctx.dataset.label}: ${ctx.parsed.y >= 0 ? '+' : ''}${ctx.parsed.y.toFixed(2)}$`
-        }
-      }
-    },
-    scales: {
-      x: {
-        ticks: { color: '#554e6e', font: { family: 'Space Mono', size: 9 }, maxRotation: 45 },
-        grid: { color: 'rgba(42,42,56,0.6)' }
-      },
-      y: {
-        ticks: { color: '#554e6e', font: { family: 'Space Mono', size: 9 } },
-        grid: { color: 'rgba(42,42,56,0.6)' },
-        title: { display: true, text: yLabel, color: '#554e6e', font: { size: 9 } }
-      }
-    }
-  };
-}
-
-// ===== HELPERS =====
-function showLoading(containerId) {
-  document.getElementById(containerId).innerHTML = `
-    <div class="loading">
-      <div class="spinner"></div>
-      Yuklanmoqda...
-    </div>`;
-}
-
-function showError(containerId, msg) {
-  document.getElementById(containerId).innerHTML = `
-    <div class="empty">
-      <div class="empty-icon">⚠️</div>
-      ${msg || 'Xato yuz berdi'}
-    </div>`;
-}
-
-// ===== INIT =====
-document.addEventListener('DOMContentLoaded', () => {
-  initTabs();
-  loadOverview();
 });
+
+// ─── Overview ────────────────────────────────
+
+async function loadOverview() {
+  const data = await apiFetch('/api/overview');
+  if (!data) {
+    document.getElementById('actual-balance').textContent = 'Xato';
+    return;
+  }
+
+  const { settings, current_balance, planned_balance, summary } = data;
+
+  // Balans
+  const actualEl = document.getElementById('actual-balance');
+  if (actualEl) actualEl.textContent = fmtMoney(current_balance, false);
+
+  const plannedEl = document.getElementById('planned-balance');
+  if (plannedEl) plannedEl.textContent = fmtMoney(planned_balance, false);
+
+  // Farq
+  const diff = (current_balance || 0) - (planned_balance || 0);
+  const diffEl = document.getElementById('balance-diff-val');
+  if (diffEl) {
+    diffEl.textContent = fmtMoney(diff);
+    diffEl.className = `diff-value ${diff >= 0 ? 'pos' : 'neg'}`;
+  }
+
+  // Progress — kunlar
+  const totalDays = settings?.total_days || 0;
+  const doneDays  = summary?.total_days  || 0;
+  const daysPct   = totalDays > 0 ? (doneDays / totalDays) * 100 : 0;
+  setProgress('progress-days', 'progress-days-text', daysPct, `${doneDays}/${totalDays}`, 'blue');
+
+  // Progress — balans
+  const start  = settings?.starting_balance || 0;
+  const target = planned_balance || start;
+  const balPct = target > start
+    ? ((current_balance - start) / (target - start)) * 100
+    : 0;
+  setProgress('progress-balance', 'progress-balance-text', balPct, `${Math.max(0, Math.round(balPct))}%`, 'green');
+
+  // Natijalar
+  const totalPnl = summary?.total_pnl || 0;
+  const winDays  = summary?.win_days  || 0;
+  const lossDays = summary?.loss_days || 0;
+  const winRate  = doneDays > 0 ? Math.round((winDays / doneDays) * 100) : 0;
+
+  const pnlEl = document.getElementById('total-pnl');
+  if (pnlEl) {
+    pnlEl.textContent = fmtMoney(totalPnl);
+    pnlEl.className   = `stat-value ${totalPnl >= 0 ? 'green' : 'red'}`;
+  }
+
+  setEl('win-rate',  `${winRate}%`);
+  setEl('win-days',  String(winDays));
+  setEl('loss-days', String(lossDays));
+
+  // Sozlamalar
+  setEl('s-starting', settings?.starting_balance  ? `${Number(settings.starting_balance).toLocaleString()}$` : '—');
+  setEl('s-rate',     settings?.daily_profit_rate  ? `${(settings.daily_profit_rate * 100).toFixed(0)}%`     : '—');
+  setEl('s-days',     settings?.total_days         ? `${settings.total_days} kun`                            : '—');
+  setEl('s-start',    settings?.start_date         || '—');
+  setEl('s-broker',   settings?.broker_name        || '—');
+}
+
+// ─── Journal ─────────────────────────────────
+
+async function loadJournal() {
+  const container = document.getElementById('journal-tbody');
+  if (!container) return;
+  container.innerHTML = '<tr><td colspan="5"><div class="loading-state"><div class="spinner"></div></div></td></tr>';
+
+  const data = await apiFetch('/api/journal');
+
+  if (!data?.journal?.length) {
+    container.innerHTML = '<tr><td colspan="5"><div class="empty-state">Ma\'lumot topilmadi</div></td></tr>';
+    return;
+  }
+
+  const rows = [...data.journal].reverse();
+
+  container.innerHTML = rows.map(j => {
+    const pnlClass = j.net_pnl >= 0 ? 'pnl-pos' : 'pnl-neg';
+    const rowClass = !j.is_completed ? '' : j.is_rolled_over ? 'loss' : 'win';
+
+    const badge = !j.is_completed
+      ? '<span class="badge pending">Davom</span>'
+      : j.is_rolled_over
+        ? '<span class="badge loss">Rollover</span>'
+        : '<span class="badge win">✓ Bajarildi</span>';
+
+    return `<tr class="${rowClass}">
+      <td>${j.day_number}</td>
+      <td class="mono" style="font-size:11px">${j.date}</td>
+      <td class="mono pnl-pos" style="font-size:11px">${fmtMoney(j.target, false)}</td>
+      <td class="${pnlClass}">${fmtMoney(j.net_pnl)}</td>
+      <td>${badge}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ─── Charts ──────────────────────────────────
+
+let balChart = null;
+let pnlChart = null;
+
+async function loadCharts() {
+  showLoading('chart-balance-wrap');
+  showLoading('chart-pnl-wrap');
+
+  const data = await apiFetch('/api/chart_data');
+
+  if (!data?.dates?.length) {
+    showError('chart-balance-wrap', 'Grafik uchun ma\'lumot yetarli emas');
+    showError('chart-pnl-wrap', '');
+    return;
+  }
+
+  const { dates, actual, planned, pnl } = data;
+  const grid = 'rgba(255,255,255,0.06)';
+  const hint = '#5a6478';
+
+  const commonScales = {
+    x: {
+      ticks: { color: hint, font: { size: 10, family: "'JetBrains Mono'" }, maxRotation: 45 },
+      grid:  { color: grid, drawBorder: false },
+    },
+    y: {
+      ticks: {
+        color: hint,
+        font: { size: 10, family: "'JetBrains Mono'" },
+        callback: v => `$${Number(v).toLocaleString()}`,
+      },
+      grid: { color: grid, drawBorder: false },
+    },
+  };
+
+  // Balance chart
+  document.getElementById('chart-balance-wrap').innerHTML = '<canvas id="balance-chart" height="220"></canvas>';
+  const balCtx = document.getElementById('balance-chart')?.getContext('2d');
+  if (balCtx) {
+    if (balChart) balChart.destroy();
+    balChart = new Chart(balCtx, {
+      type: 'line',
+      data: {
+        labels: dates,
+        datasets: [
+          {
+            label: 'Haqiqiy',
+            data: actual,
+            borderColor: '#00e096',
+            backgroundColor: 'rgba(0,224,150,0.08)',
+            borderWidth: 2,
+            pointRadius: 3,
+            pointBackgroundColor: '#00e096',
+            fill: true,
+            tension: 0.35,
+          },
+          {
+            label: 'Rejalangan',
+            data: planned,
+            borderColor: '#4d9fff',
+            borderWidth: 1.5,
+            borderDash: [5, 5],
+            pointRadius: 0,
+            fill: false,
+            tension: 0.35,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: {
+            labels: {
+              color: '#8892a4',
+              font: { size: 11 },
+              boxWidth: 12,
+              padding: 16,
+            },
+          },
+          tooltip: {
+            backgroundColor: '#1a1e2a',
+            borderColor: 'rgba(255,255,255,0.1)',
+            borderWidth: 1,
+            titleColor: '#e8eaf0',
+            bodyColor: '#8892a4',
+            callbacks: {
+              label: ctx => ` ${ctx.dataset.label}: $${Number(ctx.raw).toLocaleString('en-US', { minimumFractionDigits: 2 })}`,
+            },
+          },
+        },
+        scales: commonScales,
+        interaction: { mode: 'index', intersect: false },
+      },
+    });
+  }
+
+  // PnL chart
+  document.getElementById('chart-pnl-wrap').innerHTML = '<canvas id="pnl-chart" height="180"></canvas>';
+  const pnlCtx = document.getElementById('pnl-chart')?.getContext('2d');
+  if (pnlCtx) {
+    if (pnlChart) pnlChart.destroy();
+    pnlChart = new Chart(pnlCtx, {
+      type: 'bar',
+      data: {
+        labels: dates,
+        datasets: [{
+          label: 'Kunlik PnL',
+          data: pnl,
+          backgroundColor: pnl.map(v => v >= 0 ? 'rgba(0,224,150,0.65)' : 'rgba(255,77,106,0.65)'),
+          borderColor:      pnl.map(v => v >= 0 ? '#00e096' : '#ff4d6a'),
+          borderWidth: 1,
+          borderRadius: 4,
+        }],
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: '#1a1e2a',
+            borderColor: 'rgba(255,255,255,0.1)',
+            borderWidth: 1,
+            titleColor: '#e8eaf0',
+            bodyColor: '#8892a4',
+            callbacks: {
+              label: ctx => ` PnL: ${ctx.raw >= 0 ? '+' : ''}$${Number(ctx.raw).toLocaleString('en-US', { minimumFractionDigits: 2 })}`,
+            },
+          },
+        },
+        scales: commonScales,
+      },
+    });
+  }
+}
+
+// ─── Ishga tushirish ─────────────────────────
+
+loadOverview();

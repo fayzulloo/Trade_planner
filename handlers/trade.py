@@ -1,141 +1,174 @@
+"""
+Savdo kiritish handlerlari.
+1-usul: Qo'lda kiritish (FSM)
+2-usul: MT5 Screenshot (Gemini tahlili)
+"""
+
+import logging
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, PhotoSize
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from database.queries import add_trade, get_today_journal, get_settings, update_journal_pnl
-from utils.calculator import get_current_day
-from handlers.keyboards import plan_inline
-from handlers.plan import build_plan_text
-from utils.logger import logger
 
+from database.queries import get_settings, get_today_journal, add_trade
+from handlers.keyboards import (
+    direction_kb, cancel_trade_kb,
+    mt5_trades_list_kb, mt5_edit_fields_kb, mt5_after_edit_kb,
+    plan_kb,
+)
+from utils.calculator import get_current_date, parse_start_date, get_day_number
+from utils.mt5_analyzer import analyze_mt5_screenshot
+
+logger = logging.getLogger(__name__)
 router = Router()
 
 
+# ─────────────────────────────────────────────
+# FSM States
+# ─────────────────────────────────────────────
+
 class TradeForm(StatesGroup):
-    symbol = State()
+    """Qo'lda savdo kiritish bosqichlari."""
+    symbol    = State()
     direction = State()
-    entry = State()
-    exit_price = State()
-    quantity = State()
-    pnl = State()
+    entry     = State()
+    exit      = State()
+    quantity  = State()
+    pnl       = State()
 
 
-def cancel_keyboard():
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="❌ Bekor qilish", callback_data="trade_cancel")]
-    ])
+class MT5EditForm(StatesGroup):
+    """MT5 savdo maydonini tahrirlash."""
+    waiting_value = State()
 
+
+# ─────────────────────────────────────────────
+# YORDAMCHI
+# ─────────────────────────────────────────────
+
+async def _get_day_number(user_id: int) -> int | None:
+    """
+    Bugungi kun raqamini qaytaradi.
+    """
+    settings = await get_settings(user_id)
+    if not settings or not settings["is_active"]:
+        return None
+    start_date = parse_start_date(settings.get("start_date") or "")
+    if not start_date:
+        return None
+    today = get_current_date(settings["timezone"])
+    return get_day_number(
+        start_date, today,
+        settings.get("rest_days", ""),
+        settings.get("total_days", 0),
+    )
+
+
+# ─────────────────────────────────────────────
+# QO'LDA KIRITISH
+# ─────────────────────────────────────────────
 
 @router.callback_query(F.data == "trade_add")
-async def trade_start(call: CallbackQuery, state: FSMContext, db_user_id: int, settings_complete: bool):
-    if not settings_complete:
-        await call.answer("Sozlamalar to'ldirilmagan!", show_alert=True)
-        return
-    await state.set_state(TradeForm.symbol)
-    await call.message.edit_text(
-        "📝 <b>Yangi savdo kiritish</b>\n\n"
-        "1️⃣ Juft nomini kiriting:\n"
-        "<i>Masalan: EURUSD, GBPUSD, XAUUSD</i>",
-        reply_markup=cancel_keyboard(),
-        parse_mode="HTML"
-    )
-    await call.answer()
+async def trade_add_start(callback: CallbackQuery, state: FSMContext, user_id: int, **kwargs) -> None:
+    """Savdo kiritishni boshlash."""
+    try:
+        day_number = await _get_day_number(user_id)
+        if not day_number:
+            await callback.answer("Bugun savdo kuni emas.", show_alert=True)
+            return
+
+        settings = await get_settings(user_id)
+        today = get_current_date(settings["timezone"])
+        journal = await get_today_journal(user_id, today)
+
+        if journal and journal["is_completed"]:
+            await callback.answer("⚠️ Kun allaqachon yakunlangan.", show_alert=True)
+            return
+
+        await state.set_state(TradeForm.symbol)
+        await callback.message.answer(
+            "📝 <b>Yangi savdo</b>\n\nSymbol kiriting (masalan: XAUUSD):",
+            reply_markup=cancel_trade_kb(),
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logger.error(f"trade_add_start xato [user_id={user_id}]: {e}")
+        await callback.answer("⚠️ Xato yuz berdi.", show_alert=True)
+    finally:
+        await callback.answer()
 
 
 @router.message(TradeForm.symbol)
-async def trade_symbol(message: Message, state: FSMContext):
-    if not message.text:
-        await message.answer("⚠️ Iltimos matn kiriting:", reply_markup=cancel_keyboard(), parse_mode="HTML")
-        return
+async def trade_symbol(message: Message, state: FSMContext, **kwargs) -> None:
+    """Symbol kiritildi."""
     symbol = message.text.strip().upper()
-    if len(symbol) < 3 or len(symbol) > 10:
-        await message.answer(
-            "⚠️ Noto'g'ri format. Qayta kiriting:\n<i>Masalan: EURUSD</i>",
-            reply_markup=cancel_keyboard(), parse_mode="HTML"
-        )
+    if len(symbol) < 3 or len(symbol) > 12:
+        await message.answer("⚠️ Noto'g'ri symbol. Qaytadan kiriting:", reply_markup=cancel_trade_kb())
         return
     await state.update_data(symbol=symbol)
     await state.set_state(TradeForm.direction)
-
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="📈 BUY", callback_data="dir_BUY"),
-            InlineKeyboardButton(text="📉 SELL", callback_data="dir_SELL")
-        ],
-        [InlineKeyboardButton(text="❌ Bekor qilish", callback_data="trade_cancel")]
-    ])
     await message.answer(
-        f"✅ Juft: <b>{symbol}</b>\n\n2️⃣ Yo'nalishni tanlang:",
-        reply_markup=kb, parse_mode="HTML"
+        f"✅ Symbol: <b>{symbol}</b>\n\nYo'nalish tanlang:",
+        reply_markup=direction_kb(),
+        parse_mode="HTML",
     )
 
 
-@router.callback_query(F.data.in_(["dir_BUY", "dir_SELL"]))
-async def trade_direction(call: CallbackQuery, state: FSMContext):
-    direction = call.data.split("_")[1]
+@router.callback_query(F.data.in_({"dir_BUY", "dir_SELL"}))
+async def trade_direction(callback: CallbackQuery, state: FSMContext, **kwargs) -> None:
+    """BUY yoki SELL tanlandi."""
+    current_state = await state.get_state()
+    if current_state != TradeForm.direction:
+        await callback.answer()
+        return
+
+    direction = "BUY" if callback.data == "dir_BUY" else "SELL"
     await state.update_data(direction=direction)
     await state.set_state(TradeForm.entry)
-    await call.message.edit_text(
-        f"✅ Yo'nalish: <b>{direction}</b>\n\n3️⃣ Kirish narxini kiriting:\n<i>Masalan: 1.08523</i>",
-        reply_markup=cancel_keyboard(), parse_mode="HTML"
+    icon = "📈" if direction == "BUY" else "📉"
+    await callback.message.edit_text(
+        f"{icon} Yo'nalish: <b>{direction}</b>\n\nEntry narx kiriting:",
+        reply_markup=cancel_trade_kb(),
+        parse_mode="HTML",
     )
-    await call.answer()
+    await callback.answer()
 
 
 @router.message(TradeForm.entry)
-async def trade_entry(message: Message, state: FSMContext):
-    if not message.text:
-        await message.answer("⚠️ Raqam kiriting:", reply_markup=cancel_keyboard(), parse_mode="HTML")
-        return
+async def trade_entry(message: Message, state: FSMContext, **kwargs) -> None:
+    """Entry narx kiritildi."""
     try:
         entry = float(message.text.replace(",", "."))
-        if entry <= 0:
-            raise ValueError
-        await state.update_data(entry=entry)
-        await state.set_state(TradeForm.exit_price)
+        await state.update_data(entry_price=entry)
+        await state.set_state(TradeForm.exit)
         await message.answer(
-            f"✅ Kirish narxi: <b>{entry}</b>\n\n4️⃣ Chiqish narxini kiriting:",
-            reply_markup=cancel_keyboard(), parse_mode="HTML"
+            f"✅ Entry: <b>{entry}</b>\n\nExit narx kiriting:",
+            reply_markup=cancel_trade_kb(),
+            parse_mode="HTML",
         )
     except ValueError:
-        await message.answer(
-            "⚠️ Noto'g'ri raqam. Qayta kiriting:\n<i>Masalan: 1.08523</i>",
-            reply_markup=cancel_keyboard(), parse_mode="HTML"
-        )
+        await message.answer("⚠️ Raqam kiriting (masalan: 2345.67):", reply_markup=cancel_trade_kb())
 
 
-@router.message(TradeForm.exit_price)
-async def trade_exit(message: Message, state: FSMContext):
-    if not message.text:
-        await message.answer("⚠️ Raqam kiriting:", reply_markup=cancel_keyboard(), parse_mode="HTML")
-        return
+@router.message(TradeForm.exit)
+async def trade_exit(message: Message, state: FSMContext, **kwargs) -> None:
+    """Exit narx kiritildi."""
     try:
-        exit_p = float(message.text.replace(",", "."))
-        if exit_p <= 0:
-            raise ValueError
-        await state.update_data(exit_price=exit_p)
+        exit_price = float(message.text.replace(",", "."))
+        await state.update_data(exit_price=exit_price)
         await state.set_state(TradeForm.quantity)
         await message.answer(
-            f"✅ Chiqish narxi: <b>{exit_p}</b>\n\n5️⃣ Miqdorni kiriting (lot):\n<i>Masalan: 0.1</i>",
-            reply_markup=cancel_keyboard(), parse_mode="HTML"
+            f"✅ Exit: <b>{exit_price}</b>\n\nHajm (lot) kiriting:",
+            reply_markup=cancel_trade_kb(),
+            parse_mode="HTML",
         )
     except ValueError:
-        await message.answer(
-            "⚠️ Noto'g'ri raqam. Qayta kiriting:",
-            reply_markup=cancel_keyboard(), parse_mode="HTML"
-        )
+        await message.answer("⚠️ Raqam kiriting (masalan: 0.10):", reply_markup=cancel_trade_kb())
 
 
 @router.message(TradeForm.quantity)
-async def trade_quantity(message: Message, state: FSMContext):
-    if not message.text:
-        await message.answer(
-            "⚠️ Faqat raqam yuboring:",
-            reply_markup=cancel_keyboard(), parse_mode="HTML"
-        )
-        return
+async def trade_quantity(message: Message, state: FSMContext, **kwargs) -> None:
+    """Lot hajmi kiritildi."""
     try:
         qty = float(message.text.replace(",", "."))
         if qty <= 0:
@@ -143,461 +176,278 @@ async def trade_quantity(message: Message, state: FSMContext):
         await state.update_data(quantity=qty)
         await state.set_state(TradeForm.pnl)
         await message.answer(
-            f"✅ Miqdor: <b>{qty}</b>\n\n"
-            "6️⃣ PnL ni kiriting (USD):\n"
-            "<i>Foyda: +25.50 yoki 25.50\n"
-            "Zarar: -15.00</i>",
-            reply_markup=cancel_keyboard(), parse_mode="HTML"
+            f"✅ Lot: <b>{qty}</b>\n\nPnL kiriting (+/- $, masalan: +125.50):",
+            reply_markup=cancel_trade_kb(),
+            parse_mode="HTML",
         )
     except ValueError:
-        await message.answer(
-            "⚠️ Noto'g'ri raqam. Qayta kiriting:",
-            reply_markup=cancel_keyboard(), parse_mode="HTML"
-        )
+        await message.answer("⚠️ Musbat raqam kiriting (masalan: 0.10):", reply_markup=cancel_trade_kb())
 
 
 @router.message(TradeForm.pnl)
-async def trade_pnl(message: Message, state: FSMContext, db_user_id: int):
-    if not message.text:
-        await message.answer(
-            "⚠️ Faqat raqam yuboring (masalan: +25.50 yoki -15.00):",
-            reply_markup=cancel_keyboard(), parse_mode="HTML"
-        )
-        return
+async def trade_pnl(message: Message, state: FSMContext, user_id: int, **kwargs) -> None:
+    """PnL kiritildi — savdoni saqlash."""
     try:
         pnl = float(message.text.replace(",", ".").replace("+", ""))
-        data = await state.get_data()
-        await state.clear()
+    except ValueError:
+        await message.answer("⚠️ Raqam kiriting (masalan: +125.50 yoki -30.00):", reply_markup=cancel_trade_kb())
+        return
 
-        settings = await get_settings(db_user_id)
-        day = get_current_day(settings["start_date"], settings["total_days"])
-        if day == 0:
-            await message.answer("⚠️ Strategiya hali boshlanmagan yoki bugun dam olish kuni!")
+    data = await state.get_data()
+    await state.clear()
+
+    try:
+        day_number = await _get_day_number(user_id)
+        if not day_number:
+            await message.answer("⚠️ Kun raqami topilmadi.")
             return
 
-        await add_trade(
-            user_id=db_user_id,
-            day_number=day,
+        settings = await get_settings(user_id)
+        trade = await add_trade(
+            user_id=user_id,
+            day_number=day_number,
             symbol=data["symbol"],
             direction=data["direction"],
-            entry=data["entry"],
-            exit_p=data["exit_price"],
-            qty=data["quantity"],
-            pnl=pnl
+            entry_price=data["entry_price"],
+            exit_price=data["exit_price"],
+            quantity=data["quantity"],
+            pnl=pnl,
+            broker=settings.get("broker_name"),
         )
-        await update_journal_pnl(db_user_id)
 
-        emoji = "🟢" if pnl >= 0 else "🔴"
         sign = "+" if pnl >= 0 else ""
-
         await message.answer(
-            f"{emoji} <b>Savdo saqlandi!</b>\n\n"
-            f"📌 Juft: <b>{data['symbol']}</b>\n"
-            f"📊 Yo'nalish: <b>{data['direction']}</b>\n"
-            f"📥 Kirish: <b>{data['entry']}</b>\n"
-            f"📤 Chiqish: <b>{data['exit_price']}</b>\n"
-            f"📦 Miqdor: <b>{data['quantity']}</b>\n"
-            f"💵 PnL: <b>{sign}{pnl}$</b>",
-            parse_mode="HTML"
+            f"✅ <b>Savdo saqlandi!</b>\n\n"
+            f"📌 {data['symbol']} {data['direction']}\n"
+            f"📊 PnL: <b>{sign}{pnl:.2f}$</b>",
+            parse_mode="HTML",
         )
-
-        text, info = await build_plan_text(db_user_id)
-        is_wday = info.get("is_withdrawal_day", False)
-        wc = info.get("withdrawal_confirmed", False)
-        remaining = info.get("remaining", 0)
-
-        if remaining <= 0:
-            await message.answer(
-                "🎉 <b>Tabriklaymiz! Bugungi maqsadga erishdingiz!</b>",
-                parse_mode="HTML"
-            )
-
-        await message.answer(
-            text,
-            reply_markup=plan_inline(is_withdrawal_day=is_wday, withdrawal_confirmed=wc),
-            parse_mode="HTML"
-        )
-
-    except ValueError:
-        await message.answer(
-            "⚠️ Noto'g'ri raqam. Qayta kiriting:\n<i>Masalan: +25.50 yoki -10.00</i>",
-            reply_markup=cancel_keyboard(), parse_mode="HTML"
-        )
+    except Exception as e:
+        logger.error(f"trade_pnl saqlash xato [user_id={user_id}]: {e}")
+        await message.answer("⚠️ Saqlashda xato yuz berdi.")
 
 
 @router.callback_query(F.data == "trade_cancel")
-async def trade_cancel(call: CallbackQuery, state: FSMContext, db_user_id: int):
+async def trade_cancel(callback: CallbackQuery, state: FSMContext, **kwargs) -> None:
+    """Savdo kiritishni bekor qilish."""
     await state.clear()
-    text, info = await build_plan_text(db_user_id)
-    is_wday = info.get("is_withdrawal_day", False)
-    wc = info.get("withdrawal_confirmed", False)
-    await call.message.edit_text(
-        text,
-        reply_markup=plan_inline(is_withdrawal_day=is_wday, withdrawal_confirmed=wc),
-        parse_mode="HTML"
-    )
-    await call.answer("❌ Bekor qilindi")
+    await callback.message.edit_text("❌ Savdo kiritish bekor qilindi.")
+    await callback.answer()
 
 
-
-# ===== MT5 SKRINSHOT =====
-
-class MT5EditForm(StatesGroup):
-    editing_field = State()
-    editing_idx = State()
-
-
-def _trade_text(idx: int, t: dict) -> str:
-    pnl = t.get("pnl")
-
-    if pnl is not None:
-        pnl_val = float(pnl)
-        sign_str = "+" if pnl_val >= 0 else ""
-        pnl_str = f"{sign_str}{pnl_val:.2f}$"
-        emoji = "🟢" if pnl_val >= 0 else "🔴"
-    else:
-        emoji = "❓"
-        pnl_str = "Noma'lum (tahrirlang)"
-
-    swap = float(t.get("swap") or 0)
-    commission = float(t.get("commission") or 0)
-    order_id = t.get("order_id")
-
-    text = (
-        f"<b>{idx + 1}. {t.get('symbol', '?')} {t.get('direction', '?')} "
-        f"{t.get('quantity', '?')} lot</b>\n"
-        f"   📥 Kirish: <b>{t.get('entry_price', '?')}</b>\n"
-        f"   📤 Chiqish: <b>{t.get('exit_price', '?')}</b>\n"
-        f"   🕐 Ochilgan: <b>{t.get('open_time') or '—'}</b>\n"
-        f"   🕑 Yopilgan: <b>{t.get('close_time') or '—'}</b>\n"
-        f"   {emoji} PnL: <b>{pnl_str}</b>\n"
-        f"   💱 Svop: <b>{swap}</b> | Komissiya: <b>{commission}</b>"
-    )
-    if order_id:
-        text += f"\n   🔖 Order: <b>#{order_id}</b>"
-    return text
-
-
-def _mt5_confirm_kb(trades: list) -> "InlineKeyboardMarkup":
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    rows = []
-    for i, t in enumerate(trades):
-        rows.append([InlineKeyboardButton(
-            text=f"✏️ {i+1}. {t.get('symbol','?')} {t.get('direction','?')} | {'🟢' if float(t.get('pnl') or 0)>=0 else '🔴'} {float(t.get('pnl') or 0):.2f}$",
-            callback_data=f"mt5_edit_{i}"
-        )])
-    rows.append([
-        InlineKeyboardButton(text="✅ Hammasini saqlash", callback_data="mt5_save_all"),
-        InlineKeyboardButton(text="❌ Bekor", callback_data="mt5_cancel")
-    ])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def _mt5_edit_kb(idx: int) -> "InlineKeyboardMarkup":
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="Symbol", callback_data=f"mt5ef_{idx}_symbol"),
-            InlineKeyboardButton(text="Direction", callback_data=f"mt5ef_{idx}_direction"),
-        ],
-        [
-            InlineKeyboardButton(text="Entry", callback_data=f"mt5ef_{idx}_entry_price"),
-            InlineKeyboardButton(text="Exit", callback_data=f"mt5ef_{idx}_exit_price"),
-        ],
-        [
-            InlineKeyboardButton(text="Quantity", callback_data=f"mt5ef_{idx}_quantity"),
-            InlineKeyboardButton(text="PnL", callback_data=f"mt5ef_{idx}_pnl"),
-        ],
-        [
-            InlineKeyboardButton(text="Kirish vaqti", callback_data=f"mt5ef_{idx}_open_time"),
-            InlineKeyboardButton(text="Chiqish vaqti", callback_data=f"mt5ef_{idx}_close_time"),
-        ],
-        [InlineKeyboardButton(text="🔙 Orqaga", callback_data="mt5_back_to_list")],
-    ])
-
-
-def _build_full_text(trades: list) -> str:
-    text = f"📋 <b>Aniqlangan savdolar ({len(trades)} ta):</b>\n\n"
-    for i, t in enumerate(trades):
-        text += _trade_text(i, t) + "\n\n"
-    text += "✏️ Xato bo'lsa savdo ustidagi tugmani bosing.\n"
-    text += "✅ To'g'ri bo'lsa <b>Hammasini saqlash</b> bosing."
-    return text
-
+# ─────────────────────────────────────────────
+# MT5 SCREENSHOT
+# ─────────────────────────────────────────────
 
 @router.message(F.photo)
-async def handle_mt5_screenshot(message: Message, state: FSMContext,
-                                  db_user_id: int, settings_complete: bool):
-    if not settings_complete:
-        await message.answer("⚠️ Avval sozlamalarni to'ldiring.", parse_mode="HTML")
-        return
-
-    from datetime import datetime, date as date_type
-    settings = await get_settings(db_user_id)
-    if settings and settings.get("start_date"):
-        start = datetime.strptime(settings["start_date"], "%d.%m.%Y").date()
-        if start > date_type.today():
-            await message.answer("⏳ Strategiya hali boshlanmagan!", parse_mode="HTML")
-            return
-
-    wait_msg = await message.answer("🔍 Skrinshot tahlil qilinmoqda...")
-
+async def handle_mt5_screenshot(message: Message, state: FSMContext, user_id: int, **kwargs) -> None:
+    """
+    Rasm yuborilganda MT5 tahlili.
+    Gemini API orqali savdolarni aniqlaydi.
+    """
     try:
-        photo = message.photo[-1]
+        # Eng katta o'lchamdagi rasmni olish
+        photo: PhotoSize = message.photo[-1]
         file = await message.bot.get_file(photo.file_id)
         file_bytes = await message.bot.download_file(file.file_path)
         image_bytes = file_bytes.read()
 
-        from utils.mt5_analyzer import analyze_mt5_screenshot
-        trades, need_wait = await analyze_mt5_screenshot(image_bytes)
+        wait_msg = await message.answer("⏳ Rasm tahlil qilinmoqda...")
+
+        trades = await analyze_mt5_screenshot(image_bytes)
 
         await wait_msg.delete()
 
-        if not trades:
-            if need_wait:
-                await message.answer(
-                    "⏳ <b>Barcha modellar vaqtincha band.</b>"
-                    
-                    "Biroz kuting va qayta urinib ko'ring."
-                    
-                    "Yoki savdoni qo'lda kiriting: <b>📊 Bugungi reja → 📝 Savdo kiriting</b>",
-                    parse_mode="HTML"
-                )
-            else:
-                await message.answer(
-                    "❌ Skrinshot tahlil qilinmadi."
-                    
-                    "MT5 yopilgan savdolar ekranini yuboring yoki "
-                    "savdoni qo'lda kiriting.",
-                    parse_mode="HTML"
-                )
+        if trades is None:
+            await message.answer("⚠️ MT5 tahlil xizmati mavjud emas yoki xato yuz berdi.")
             return
 
-        # Noma'lum maydonlarni tekshirish
-        invalid = []
-        for i, t in enumerate(trades):
-            missing = [k for k, v in t.items() if v is None and k in ("symbol", "direction", "entry_price", "exit_price", "quantity", "pnl")]
-            if missing:
-                invalid.append(f"{i+1}-savdo: {', '.join(missing)}")
+        if not trades:
+            await message.answer("❌ Rasmda savdo topilmadi.")
+            return
 
+        # State ga saqlash
         await state.update_data(mt5_trades=trades)
 
-        text = _build_full_text(trades)
-        if invalid:
-            text += "\n\n⚠️ <b>Quyidagi maydonlar o'qilmadi:</b>\n" + "\n".join(invalid)
+        # Savdolar ro'yxatini ko'rsatish
+        text = f"📸 <b>{len(trades)} ta savdo topildi:</b>\n\n"
+        for i, t in enumerate(trades, 1):
+            sign = "+" if t["pnl"] >= 0 else ""
+            text += f"{i}. {t['symbol']} {t['direction']} {sign}{t['pnl']:.2f}$\n"
 
-        await message.answer(text, reply_markup=_mt5_confirm_kb(trades), parse_mode="HTML")
-
+        await message.answer(
+            text,
+            reply_markup=mt5_trades_list_kb(trades),
+            parse_mode="HTML",
+        )
     except Exception as e:
-        logger.error(f"MT5 skrinshot xatosi: {e}")
-        try:
-            await wait_msg.delete()
-        except Exception:
-            pass
-        await message.answer("⚠️ Xato yuz berdi. Qayta urinib ko'ring.", parse_mode="HTML")
-
-
-@router.callback_query(F.data == "mt5_back_to_list")
-async def mt5_back_to_list(call: CallbackQuery, state: FSMContext):
-    await state.set_state(None)
-    data = await state.get_data()
-    trades = data.get("mt5_trades", [])
-    text = _build_full_text(trades)
-    try:
-        await call.message.edit_text(text, reply_markup=_mt5_confirm_kb(trades), parse_mode="HTML")
-    except Exception:
-        await call.message.answer(text, reply_markup=_mt5_confirm_kb(trades), parse_mode="HTML")
-    await call.answer()
+        logger.error(f"handle_mt5_screenshot xato [user_id={user_id}]: {e}")
+        await message.answer("⚠️ Rasmni qayta ishlashda xato yuz berdi.")
 
 
 @router.callback_query(F.data.startswith("mt5_edit_"))
-async def mt5_edit_trade(call: CallbackQuery, state: FSMContext):
-    idx = int(call.data.split("_")[2])
+async def mt5_edit_trade(callback: CallbackQuery, state: FSMContext, **kwargs) -> None:
+    """MT5 savdoni tahrirlash — maydon tanlash."""
+    idx = int(callback.data.split("_")[-1])
     data = await state.get_data()
     trades = data.get("mt5_trades", [])
+
     if idx >= len(trades):
-        await call.answer("Savdo topilmadi!", show_alert=True)
+        await callback.answer("Savdo topilmadi.", show_alert=True)
         return
 
     t = trades[idx]
-    text = f"✏️ <b>{idx+1}-savdoni tahrirlash:</b>\n\n" + _trade_text(idx, t) + "\n\nQaysi maydonni o'zgartirmoqchisiz?"
-    try:
-        await call.message.edit_text(text, reply_markup=_mt5_edit_kb(idx), parse_mode="HTML")
-    except Exception:
-        await call.message.answer(text, reply_markup=_mt5_edit_kb(idx), parse_mode="HTML")
-    await call.answer()
+    sign = "+" if t["pnl"] >= 0 else ""
+    await callback.message.edit_text(
+        f"✏️ <b>{idx+1}. {t['symbol']} {t['direction']}</b>\n"
+        f"Entry: {t['entry_price']} | Exit: {t['exit_price']}\n"
+        f"Lot: {t['quantity']} | PnL: {sign}{t['pnl']:.2f}$\n\n"
+        f"Qaysi maydonni tahrirlaysiz?",
+        reply_markup=mt5_edit_fields_kb(idx),
+        parse_mode="HTML",
+    )
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("mt5ef_"))
-async def mt5_edit_field(call: CallbackQuery, state: FSMContext):
-    parts = call.data.split("_")
+async def mt5_edit_field(callback: CallbackQuery, state: FSMContext, **kwargs) -> None:
+    """MT5 aniq maydonni tahrirlash."""
+    parts = callback.data.split("_", 2)  # mt5ef_{idx}_{field}
     idx = int(parts[1])
-    field = "_".join(parts[2:])
+    field = parts[2]
 
     field_names = {
         "symbol": "Symbol (masalan: XAUUSD)",
-        "direction": "Yo'nalish: BUY yoki SELL",
-        "entry_price": "Kirish narxi (masalan: 4825.546)",
-        "exit_price": "Chiqish narxi (masalan: 4827.149)",
-        "quantity": "Miqdor/lot (masalan: 1.00)",
-        "pnl": "PnL (masalan: -160.30)",
-        "open_time": "Ochilish vaqti (masalan: 2026.04.16 02:49:47)",
-        "close_time": "Yopilish vaqti (masalan: 2026.04.16 03:12:00)",
+        "direction": "Yo'nalish (BUY yoki SELL)",
+        "entry_price": "Entry narx",
+        "exit_price": "Exit narx",
+        "quantity": "Lot hajmi",
+        "pnl": "PnL (masalan: +125.50 yoki -30.00)",
+        "open_time": "Kirish vaqti (masalan: 2024.01.15 10:30)",
+        "close_time": "Chiqish vaqti (masalan: 2024.01.15 14:45)",
     }
 
+    await state.set_state(MT5EditForm.waiting_value)
     await state.update_data(editing_idx=idx, editing_field=field)
-    await state.set_state(MT5EditForm.editing_field)
-
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔙 Orqaga", callback_data=f"mt5_edit_{idx}")]
-    ])
-    await call.message.edit_text(
-        f"✏️ <b>{field_names.get(field, field)}</b> ni kiriting:",
-        reply_markup=kb, parse_mode="HTML"
+    await callback.message.edit_text(
+        f"✏️ <b>{field_names.get(field, field)}</b> kiriting:",
+        reply_markup=cancel_trade_kb(),
+        parse_mode="HTML",
     )
-    await call.answer()
+    await callback.answer()
 
 
-@router.message(MT5EditForm.editing_field)
-async def mt5_save_field(message: Message, state: FSMContext):
+@router.message(MT5EditForm.waiting_value)
+async def mt5_save_field(message: Message, state: FSMContext, **kwargs) -> None:
+    """MT5 maydon qiymati kiritildi — saqlash."""
     data = await state.get_data()
-    idx = data.get("editing_idx")
-    field = data.get("editing_field")
+    idx = data.get("editing_idx", 0)
+    field = data.get("editing_field", "")
     trades = data.get("mt5_trades", [])
 
-    if idx is None or field is None or idx >= len(trades):
+    if idx >= len(trades):
         await state.clear()
+        await message.answer("⚠️ Savdo topilmadi.")
         return
 
     value = message.text.strip()
 
+    # Tip konversiyasi
     try:
         if field in ("entry_price", "exit_price", "quantity"):
-            trades[idx][field] = float(value.replace(",", ".").replace(" ", ""))
-        elif field == "pnl":
-            trades[idx][field] = float(value.replace(",", ".").replace("+", "").replace(" ", ""))
+            value = float(value.replace(",", "."))
+        elif field in ("pnl", "swap", "commission"):
+            value = float(value.replace(",", ".").replace("+", ""))
         elif field == "direction":
-            v = value.upper()
-            if v not in ("BUY", "SELL"):
-                await message.answer("⚠️ Faqat BUY yoki SELL kiriting:")
+            value = value.upper()
+            if value not in ("BUY", "SELL"):
+                await message.answer("⚠️ Faqat BUY yoki SELL kiriting:", reply_markup=cancel_trade_kb())
                 return
-            trades[idx][field] = v
         elif field == "symbol":
-            trades[idx][field] = value.upper()
-        else:
-            trades[idx][field] = value
-
-        await state.update_data(mt5_trades=trades)
-        await state.set_state(None)
-
-        t = trades[idx]
-        text = f"✅ Saqlandi!\n\n✏️ <b>{idx+1}-savdo:</b>\n\n" + _trade_text(idx, t) + "\n\nBoshqa maydon o'zgartirmoqchimisiz?"
-        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✏️ Yana tahrirlash", callback_data=f"mt5_edit_{idx}")],
-            [InlineKeyboardButton(text="🔙 Ro'yxatga qaytish", callback_data="mt5_back_to_list")],
-        ])
-        await message.answer(text, reply_markup=kb, parse_mode="HTML")
-
+            value = value.upper()
     except ValueError:
-        await message.answer("⚠️ Noto'g'ri format. Qayta kiriting:")
+        await message.answer("⚠️ Noto'g'ri qiymat. Raqam kiriting:", reply_markup=cancel_trade_kb())
+        return
+
+    trades[idx][field] = value
+    await state.update_data(mt5_trades=trades, editing_idx=None, editing_field=None)
+    await state.set_state(None)
+
+    await message.answer(
+        f"✅ <b>Qabul qilindi!</b>",
+        reply_markup=mt5_after_edit_kb(idx),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data == "mt5_back_to_list")
+async def mt5_back_to_list(callback: CallbackQuery, state: FSMContext, **kwargs) -> None:
+    """MT5 ro'yxatga qaytish."""
+    data = await state.get_data()
+    trades = data.get("mt5_trades", [])
+    text = f"📸 <b>{len(trades)} ta savdo:</b>\n\n"
+    for i, t in enumerate(trades, 1):
+        sign = "+" if t["pnl"] >= 0 else ""
+        text += f"{i}. {t['symbol']} {t['direction']} {sign}{t['pnl']:.2f}$\n"
+    await callback.message.edit_text(
+        text,
+        reply_markup=mt5_trades_list_kb(trades),
+        parse_mode="HTML",
+    )
+    await callback.answer()
 
 
 @router.callback_query(F.data == "mt5_save_all")
-async def mt5_save_all(call: CallbackQuery, state: FSMContext, db_user_id: int):
-    data = await state.get_data()
-    trades = data.get("mt5_trades", [])
-    await state.clear()
+async def mt5_save_all(callback: CallbackQuery, state: FSMContext, user_id: int, **kwargs) -> None:
+    """MT5 barcha savdolarni saqlash."""
+    try:
+        data = await state.get_data()
+        trades = data.get("mt5_trades", [])
+        await state.clear()
 
-    if not trades:
-        await call.answer("Savdo topilmadi!", show_alert=True)
-        return
+        day_number = await _get_day_number(user_id)
+        if not day_number:
+            await callback.answer("Bugun savdo kuni emas.", show_alert=True)
+            return
 
-    settings = await get_settings(db_user_id)
-    day = get_current_day(settings["start_date"], settings["total_days"])
-    if day == 0:
-        await call.answer("⚠️ Strategiya hali boshlanmagan yoki bugun dam olish kuni!", show_alert=True)
-        return
+        settings = await get_settings(user_id)
+        saved = 0
+        for t in trades:
+            try:
+                await add_trade(
+                    user_id=user_id,
+                    day_number=day_number,
+                    symbol=t["symbol"],
+                    direction=t["direction"],
+                    entry_price=t.get("entry_price", 0),
+                    exit_price=t.get("exit_price", 0),
+                    quantity=t.get("quantity", 0),
+                    pnl=t.get("pnl", 0),
+                    swap=t.get("swap", 0),
+                    commission=t.get("commission", 0),
+                    open_time=t.get("open_time"),
+                    close_time=t.get("close_time"),
+                    order_id=t.get("order_id"),
+                    broker=settings.get("broker_name"),
+                )
+                saved += 1
+            except Exception as e:
+                logger.error(f"MT5 savdo saqlash xato: {e}")
 
-    saved = 0
-    errors = 0
-    total_pnl = 0.0
-
-    for t in trades:
-        try:
-            # PnL Gemini dan keladi — to'g'ridan-to'g'ri ishlatiladi
-            pnl_raw = t.get("pnl")
-            if pnl_raw is not None:
-                pnl_final = float(pnl_raw)
-            else:
-                pnl_final = 0.0
-                logger.warning(f"PnL topilmadi: {t.get('symbol')} {t.get('direction')}")
-
-            # Broker sozlamalardan olinadi
-            broker = settings.get("broker_name") or None
-
-            await add_trade(
-                user_id=db_user_id,
-                day_number=day,
-                symbol=t["symbol"],
-                direction=t["direction"],
-                entry=float(t["entry_price"]),
-                exit_p=float(t["exit_price"]),
-                qty=float(t.get("quantity") or 1.0),
-                pnl=round(pnl_final, 2),
-                open_time=t.get("open_time"),
-                close_time=t.get("close_time"),
-                order_id=t.get("order_id"),
-                swap=float(t.get("swap") or 0),
-                commission=float(t.get("commission") or 0),
-                broker=broker,
-            )
-            total_pnl += pnl_final
-            saved += 1
-        except Exception as e:
-            logger.error(f"Savdo saqlashda xato: {e}, trade: {t}")
-            errors += 1
-
-    await update_journal_pnl(db_user_id)
-
-    sign = "+" if total_pnl >= 0 else ""
-    emoji = "🟢" if total_pnl >= 0 else "🔴"
-
-    result_text = (
-        f"{'✅' if not errors else '⚠️'} <b>{saved} ta savdo saqlandi"
-        f"{f', {errors} ta xato' if errors else ''}!</b>\n\n"
-        f"{emoji} Jami PnL: <b>{sign}{total_pnl:.2f}$</b>"
-    )
-
-    await call.message.edit_text(result_text, parse_mode="HTML")
-
-    text, info = await build_plan_text(db_user_id)
-    is_wday = info.get("is_withdrawal_day", False)
-    wc = info.get("withdrawal_confirmed", False)
-    remaining = info.get("remaining", 0)
-
-    if remaining <= 0:
-        await call.message.answer(
-            "🎉 <b>Tabriklaymiz! Bugungi maqsadga erishdingiz!</b>",
-            parse_mode="HTML"
+        await callback.message.edit_text(
+            f"✅ <b>{saved} ta savdo saqlandi!</b>",
+            parse_mode="HTML",
         )
-
-    await call.message.answer(
-        text,
-        reply_markup=plan_inline(is_withdrawal_day=is_wday, withdrawal_confirmed=wc),
-        parse_mode="HTML"
-    )
-    await call.answer(f"✅ {saved} ta savdo saqlandi!")
+    except Exception as e:
+        logger.error(f"mt5_save_all xato [user_id={user_id}]: {e}")
+        await callback.answer("⚠️ Xato yuz berdi.", show_alert=True)
+    finally:
+        await callback.answer()
 
 
 @router.callback_query(F.data == "mt5_cancel")
-async def mt5_cancel(call: CallbackQuery, state: FSMContext):
+async def mt5_cancel(callback: CallbackQuery, state: FSMContext, **kwargs) -> None:
+    """MT5 kiritishni bekor qilish."""
     await state.clear()
-    await call.message.edit_text(
-        "❌ Bekor qilindi.\n\n"
-        "Savdoni qo'lda kiritish uchun "
-        "<b>📊 Bugungi reja → 📝 Savdo kiriting</b>",
-        parse_mode="HTML"
-    )
-    await call.answer()
+    await callback.message.edit_text("❌ MT5 kiritish bekor qilindi.")
+    await callback.answer()

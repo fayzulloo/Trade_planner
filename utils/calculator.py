@@ -1,223 +1,392 @@
-from datetime import datetime, timedelta, date
+"""
+Trading hisob-kitoblari uchun yordamchi funksiyalar.
+Barcha moliyaviy hisob-kitoblar shu yerda markazlashgan.
+"""
+
+import logging
+from datetime import date, datetime, timedelta
+from typing import Optional
+import pytz
+
+from config import DEFAULT_TIMEZONE
+
+logger = logging.getLogger(__name__)
 
 
-def parse_rest_days(rest_days_str: str) -> set:
+# ─────────────────────────────────────────────
+# 📅 SANA VA KUN HISOBLASH
+# ─────────────────────────────────────────────
+
+def get_current_date(timezone: str = DEFAULT_TIMEZONE) -> date:
     """
-    Rest days stringini set ga o'tkazadi.
-    Format: "6,7" (6=shanba, 7=yakshanba ISO weekday)
-    Python weekday(): 0=dushanba ... 6=yakshanba
-    ISO weekday(): 1=dushanba ... 7=yakshanba
+    Foydalanuvchi timezone bo'yicha hozirgi sanani qaytaradi.
     """
-    result = set()
-    if not rest_days_str:
-        return result
-    for d in rest_days_str.split(","):
-        d = d.strip()
-        if d.isdigit():
-            iso_day = int(d)
-            # ISO 1-7 → Python 0-6
-            result.add(iso_day - 1)
-    return result
-
-
-def is_rest_day(d, rest_days: set) -> bool:
-    """Berilgan kun dam olish kunimi"""
-    return d.weekday() in rest_days
-
-
-def get_working_days_list(start_date_str: str, total_days: int,
-                           rest_days: set = None) -> list:
-    """
-    Ish kunlari ro'yxatini qaytaradi.
-    rest_days — Python weekday() formatida (0=dushanba, 6=yakshanba)
-    """
-    if rest_days is None:
-        rest_days = {5, 6}  # default: shanba, yakshanba
     try:
-        start = datetime.strptime(start_date_str, "%d.%m.%Y").date()
-    except Exception:
-        start = date.today()
-
-    working_days = []
-    current = start
-    while len(working_days) < total_days:
-        if not is_rest_day(current, rest_days):
-            working_days.append(current)
-        current += timedelta(days=1)
-    return working_days
+        tz = pytz.timezone(timezone)
+        return datetime.now(tz).date()
+    except Exception as e:
+        logger.error(f"get_current_date xato [tz={timezone}]: {e}")
+        return datetime.now().date()
 
 
-def get_current_day(start_date_str: str, total_days: int,
-                     rest_days: set = None) -> int:
+def get_current_datetime(timezone: str = DEFAULT_TIMEZONE) -> datetime:
     """
-    Bugun strategiyaning necha-kunchi ish kuni ekanligini qaytaradi.
-
-    FIX #1: total_days endi majburiy parametr — 999 hardcode olib tashlandi.
-    Strategiya tugagan bo'lsa total_days qaytariladi (oxirgi kun).
-    Strategiya boshlanmagan bo'lsa 0 qaytariladi.
+    Foydalanuvchi timezone bo'yicha hozirgi datetime qaytaradi.
     """
-    if rest_days is None:
-        rest_days = {5, 6}
     try:
-        today = date.today()
-        working_days = get_working_days_list(start_date_str, total_days, rest_days)
-
-        # Bugun ro'yxatda bormi — to'g'ridan-to'g'ri topamiz
-        for i, d in enumerate(working_days):
-            if d == today:
-                return i + 1
-
-        # Bugun ish kuni emas (dam olish kuni) yoki strategiya tugagan
-        past = [d for d in working_days if d < today]
-        if not past:
-            return 0  # Strategiya hali boshlanmagan
-
-        # Strategiya tugagan bo'lsa — total_days + 1 qaytaramiz
-        # (plan.py da "if day > total_days" sharti True bo'lsin)
-        return total_days + 1
-    except Exception:
-        return 1
+        tz = pytz.timezone(timezone)
+        return datetime.now(tz)
+    except Exception as e:
+        logger.error(f"get_current_datetime xato [tz={timezone}]: {e}")
+        return datetime.now()
 
 
-def is_today_rest_day(rest_days: set = None) -> bool:
-    """Bugun dam olish kunimi"""
-    if rest_days is None:
-        rest_days = {5, 6}
-    return date.today().weekday() in rest_days
+def parse_start_date(start_date_str: str) -> Optional[date]:
+    """
+    Sozlamadagi sana stringini date ga o'giradi.
+    Format: DD.MM.YYYY
+    """
+    try:
+        return datetime.strptime(start_date_str, "%d.%m.%Y").date()
+    except Exception as e:
+        logger.error(f"parse_start_date xato [{start_date_str}]: {e}")
+        return None
+
+
+def get_day_number(
+    start_date: date,
+    today: date,
+    rest_days: str = "",
+    total_days: int = 0,
+) -> Optional[int]:
+    """
+    Bugungi strategiya kun raqamini hisoblaydi.
+    Dam olish kunlari hisobga olinmaydi.
+
+    Parametrlar:
+        start_date — strategiya boshlanish sanasi
+        today      — bugungi sana
+        rest_days  — dam olish kunlari ("6,7" formatida, 1=Yakshanba...7=Shanba)
+        total_days — strategiya davri (kun). 0 bo'lsa limit yo'q.
+
+    Qaytaradi:
+        Kun raqami (1 dan boshlab)
+        None — dam olish kuni bo'lsa
+        None — strategiya tugagan bo'lsa (day_number > total_days)
+        None — strategiya boshlanmagan bo'lsa (today < start_date)
+
+    ⚠️ Diqqat: Python weekday() 0=Dushanba...6=Yakshanba
+    Bizning format:  1=Yakshanba, 2=Dushanba ... 7=Shanba
+    Konversiya: (weekday + 2) % 7 or 7
+    """
+    try:
+        if today < start_date:
+            return None
+
+        # Dam olish kunlari ro'yxati
+        rest_list = []
+        if rest_days:
+            rest_list = [int(d.strip()) for d in rest_days.split(",") if d.strip().isdigit()]
+
+        # Python weekday → bizning format (1=Yakshanba...7=Shanba)
+        def to_our_weekday(d: date) -> int:
+            # Python: 0=Mon, 1=Tue, ..., 6=Sun
+            # Bizniki: 1=Sun, 2=Mon, ..., 7=Sat
+            return (d.weekday() + 2) % 7 or 7
+
+        # Bugun dam olish kunimi?
+        if to_our_weekday(today) in rest_list:
+            return None
+
+        # Boshlanish sanasidan bugungacha ish kunlarini sanash
+        day_count = 0
+        current = start_date
+        while current <= today:
+            if to_our_weekday(current) not in rest_list:
+                day_count += 1
+            current += timedelta(days=1)
+
+        # ⚠️ Strategiya tugaganmi?
+        if total_days > 0 and day_count > total_days:
+            return None
+
+        return day_count
+    except Exception as e:
+        logger.error(f"get_day_number xato: {e}")
+        return None
+
+
+def is_strategy_finished(
+    start_date: date,
+    today: date,
+    rest_days: str = "",
+    total_days: int = 0,
+) -> bool:
+    """
+    Strategiya davri tugaganini tekshiradi.
+
+    Qaytaradi:
+        True  — strategiya tugagan (day_number > total_days)
+        False — hali davom etmoqda yoki boshlanmagan
+    """
+    try:
+        if total_days <= 0:
+            return False
+        if today < start_date:
+            return False
+
+        rest_list = []
+        if rest_days:
+            rest_list = [int(d.strip()) for d in rest_days.split(",") if d.strip().isdigit()]
+
+        def to_our_weekday(d: date) -> int:
+            return (d.weekday() + 2) % 7 or 7
+
+        day_count = 0
+        current = start_date
+        while current <= today:
+            if to_our_weekday(current) not in rest_list:
+                day_count += 1
+            current += timedelta(days=1)
+
+        return day_count > total_days
+    except Exception as e:
+        logger.error(f"is_strategy_finished xato: {e}")
+        return False
+
+
+def is_rest_day(today: date, rest_days: str = "") -> bool:
+    """
+    Bugun dam olish kunimi?
+    """
+    try:
+        if not rest_days:
+            return False
+        rest_list = [int(d.strip()) for d in rest_days.split(",") if d.strip().isdigit()]
+
+        def to_our_weekday(d: date) -> int:
+            return (d.weekday() + 2) % 7 or 7
+
+        return to_our_weekday(today) in rest_list
+    except Exception as e:
+        logger.error(f"is_rest_day xato: {e}")
+        return False
 
 
 def is_withdrawal_day(day_number: int, withdrawal_every: int) -> bool:
     """
-    FIX #4: withdrawal_every=1 bo'lsa har kuni chiqariladi — bu noto'g'ri.
-    Minimal chegara 2 kun qo'yildi.
+    Bu kun yechish kunimi?
+    withdrawal_every — har necha kunda yechish.
+
+    Misol: withdrawal_every=7 bo'lsa 7, 14, 21... kunlarda True
+    ⚠️ Diqqat: 1-kun hech qachon yechish kuni emas
     """
-    return withdrawal_every >= 2 and day_number > 0 and day_number % withdrawal_every == 0
+    if day_number <= 1 or withdrawal_every <= 0:
+        return False
+    return day_number % withdrawal_every == 0
 
 
-def get_real_balance(starting_balance: float, journals: list) -> float:
+# ─────────────────────────────────────────────
+# 💰 BALANS VA MAQSAD HISOBLASH
+# ─────────────────────────────────────────────
+
+def calc_target_profit(balance: float, daily_rate: float) -> float:
     """
-    Haqiqiy joriy balans:
-    boshlang'ich + Σ(net_pnl) barcha yakunlangan kunlar uchun.
+    Kunlik foiz asosida maqsad foyda hisoblaydi.
 
-    FIX #3: actual_pnl o'rniga net_pnl ishlatiladi — swap va commission
-    ni ham o'z ichiga oladi. net_pnl mavjud bo'lmasa actual_pnl fallback.
+    Parametrlar:
+        balance    — kun boshidagi balans
+        daily_rate — kunlik foiz (0.10 = 10%)
+
+    Qaytaradi: maqsad foyda summasi ($)
     """
-    total = float(starting_balance or 0)
-    for j in journals:
-        if j.get("is_completed"):
-            # net_pnl = actual_pnl + swap + commission (trades dan hisoblangan)
-            net_pnl = j.get("net_pnl")
-            if net_pnl is not None:
-                total += float(net_pnl)
-            else:
-                # Eski journal yozuvlari uchun fallback
-                total += float(j.get("actual_pnl") or 0)
-    return round(total, 2)
+    try:
+        return round(balance * daily_rate, 2)
+    except Exception as e:
+        logger.error(f"calc_target_profit xato: {e}")
+        return 0.0
 
 
-def calculate_balance_progression(settings: dict, journals: list = None) -> list:
+def calc_total_target(
+    target_profit: float,
+    extra_target: float = 0,
+    carry_over: float = 0,
+) -> float:
     """
-    Ish kunlari uchun balans progressiyasi.
-    journals berilsa — rollover va haqiqiy balans hisobga olinadi.
-
-    FIX #2: carry_over endi keyingi kunning boshlang'ich balansiga qo'shiladi.
-    FIX #5: is_rolled flag balans hisob-kitobida ishlatiladi.
+    Kunning jami maqsadini hisoblaydi.
+    total_target = target_profit + extra_target + carry_over_amount
     """
-    balance = float(settings.get("starting_balance") or 0)
-    rate = float(settings.get("daily_profit_rate") or 0.20)
-    extra = float(settings.get("extra_target") or 0)
-    days = int(settings.get("total_days") or 7)
-    withdrawal = float(settings.get("withdrawal_amount") or 0)
-    withdrawal_every = int(settings.get("withdrawal_every") or 7)
-    start_date_str = settings.get("start_date") or "01.01.2025"
-    rest_days = parse_rest_days(settings.get("rest_days") or "6,7")
-
-    working_days = get_working_days_list(start_date_str, days, rest_days)
-
-    # Journals dan rollover ma'lumotlarini olish
-    journal_map = {}
-    if journals:
-        for j in journals:
-            journal_map[int(j.get("day_number", 0))] = j
-
-    result = []
-    pending_carry_over = 0.0  # Oldingi kundan ko'chgan rollover summasi
-
-    for i, day_date in enumerate(working_days):
-        day_number = i + 1
-
-        # FIX #2 & #5: carry_over joriy kun uchun journal dan olinadi,
-        # lekin u keyingi kunning balansiga ta'sir qilishi kerak.
-        # pending_carry_over — oldingi kunda is_rolled=True bo'lgan summa.
-        carry_over = 0.0
-        is_rolled = False
-        if day_number in journal_map:
-            j = journal_map[day_number]
-            carry_over = float(j.get("carry_over_amount") or 0)
-            is_rolled = bool(j.get("is_rolled_over"))
-
-        # FIX #2: Oldingi kundan ko'chgan carry_over ni joriy balansga qo'shamiz
-        effective_balance = round(balance + pending_carry_over, 2)
-
-        profit = round(effective_balance * rate, 2)
-        total_target = round(profit + extra + carry_over, 2)
-        is_wday = is_withdrawal_day(day_number, withdrawal_every) and withdrawal > 0
-        end_balance = round(effective_balance + profit, 2)
-        withdrawn = round(withdrawal, 2) if is_wday else 0.0
-        final_balance = round(end_balance - withdrawn, 2)
-
-        result.append({
-            "day": day_number,
-            "date": day_date.strftime("%d.%m.%Y"),
-            "date_iso": day_date.isoformat(),
-            "start_balance": effective_balance,
-            "profit_target": profit,
-            "extra_target": extra,
-            "carry_over": carry_over,
-            "total_target": total_target,
-            "end_balance": end_balance,
-            "withdrawal": withdrawn,
-            "final_balance": final_balance,
-            "is_withdrawal_day": is_wday,
-            "is_rolled_over": is_rolled,
-        })
-
-        balance = final_balance
-        # FIX #5: Keyingi kun uchun carry_over ni saqlаymiz
-        pending_carry_over = carry_over if is_rolled else 0.0
-
-    return result
+    return round(target_profit + extra_target + carry_over, 2)
 
 
-def get_strategy_summary(settings: dict, journals: list) -> dict:
-    """Strategiya yakuniy natijasi"""
-    progression = calculate_balance_progression(settings, journals)
-    total_expected = sum(d["total_target"] for d in progression)
+def calc_planned_balance(
+    starting_balance: float,
+    daily_rate: float,
+    day_number: int,
+    extra_target: float = 0,
+) -> float:
+    """
+    N-kun oxiridagi rejalangan balansni hisoblaydi (murakkab foiz).
+    Yechish va carry_over hisobga olinmaydi (sof rejalashtirish).
 
-    # FIX #3: net_pnl ishlatiladi (swap + commission bilan birga)
-    total_actual = sum(
-        float(j.get("net_pnl") if j.get("net_pnl") is not None else j.get("actual_pnl") or 0)
-        for j in journals
-    )
-    total_withdrawn = sum(
-        float(j.get("withdrawal_amount") or 0)
-        for j in journals
-        if j.get("withdrawal_confirmed")
-    )
-    completed = [j for j in journals if j.get("is_completed")]
-    real_balance = get_real_balance(
-        settings.get("starting_balance", 0), journals
-    )
+    Misol: 10000$ * (1.10)^5 = 16105.10$
+    """
+    try:
+        planned = starting_balance * ((1 + daily_rate) ** day_number)
+        planned += extra_target * day_number
+        return round(planned, 2)
+    except Exception as e:
+        logger.error(f"calc_planned_balance xato: {e}")
+        return starting_balance
 
-    return {
-        "total_days": int(settings.get("total_days") or 0),
-        "completed_days": len(completed),
-        "starting_balance": float(settings.get("starting_balance") or 0),
-        "real_balance": real_balance,
-        "total_expected_profit": round(total_expected, 2),
-        "total_actual_profit": round(total_actual, 2),
-        "total_withdrawn": round(total_withdrawn, 2),
-        "performance_pct": round(
-            (total_actual / total_expected * 100) if total_expected else 0, 1
-        ),
-    }
+
+def calc_end_balance(
+    start_balance: float,
+    net_pnl: float,
+    withdrawal: float = 0,
+) -> float:
+    """
+    Kun oxiridagi haqiqiy balansni hisoblaydi.
+    end_balance = start_balance + net_pnl - withdrawal
+    """
+    return round(start_balance + net_pnl - withdrawal, 2)
+
+
+def calc_remaining(total_target: float, current_pnl: float) -> float:
+    """
+    Maqsadga yetish uchun qolgan summani hisoblaydi.
+    Manfiy bo'lsa — maqsad oshib ketgan.
+    """
+    return round(total_target - current_pnl, 2)
+
+
+def calc_progress_percent(current_pnl: float, total_target: float) -> float:
+    """
+    Maqsad bajarilish foizini hisoblaydi.
+    Maksimal 100% (oshiqcha ko'rsatilmaydi).
+    """
+    try:
+        if total_target <= 0:
+            return 100.0
+        percent = (current_pnl / total_target) * 100
+        return round(min(percent, 100.0), 1)
+    except Exception as e:
+        logger.error(f"calc_progress_percent xato: {e}")
+        return 0.0
+
+
+def calc_strategy_progress(
+    starting_balance: float,
+    current_balance: float,
+    daily_rate: float,
+    total_days: int,
+    current_day: int,
+    extra_target: float = 0,
+) -> dict:
+    """
+    Strategiya davri umumiy progress ma'lumotlarini hisoblaydi.
+
+    Qaytaradi:
+        planned_final   — strategiya oxiridagi rejalangan balans
+        planned_current — hozirgi kun rejalangan balans
+        actual_balance  — haqiqiy hozirgi balans
+        progress_days   — kun bo'yicha progress foizi
+        progress_balance— balans bo'yicha progress foizi
+        difference      — haqiqiy vs rejalangan farq
+    """
+    try:
+        planned_final = calc_planned_balance(
+            starting_balance, daily_rate, total_days, extra_target
+        )
+        planned_current = calc_planned_balance(
+            starting_balance, daily_rate, current_day, extra_target
+        )
+        difference = round(current_balance - planned_current, 2)
+        progress_days = round((current_day / total_days) * 100, 1) if total_days > 0 else 0
+        progress_balance = round(
+            ((current_balance - starting_balance) /
+             (planned_final - starting_balance)) * 100, 1
+        ) if planned_final > starting_balance else 0
+
+        return {
+            "planned_final":    planned_final,
+            "planned_current":  planned_current,
+            "actual_balance":   current_balance,
+            "progress_days":    progress_days,
+            "progress_balance": progress_balance,
+            "difference":       difference,
+        }
+    except Exception as e:
+        logger.error(f"calc_strategy_progress xato: {e}")
+        return {}
+
+
+# ─────────────────────────────────────────────
+# 📊 STATISTIKA HISOBLASH
+# ─────────────────────────────────────────────
+
+def calc_win_rate(win_days: int, total_completed: int) -> float:
+    """
+    Win rate foizini hisoblaydi.
+    win_days / total_completed * 100
+    """
+    try:
+        if total_completed <= 0:
+            return 0.0
+        return round((win_days / total_completed) * 100, 1)
+    except Exception as e:
+        logger.error(f"calc_win_rate xato: {e}")
+        return 0.0
+
+
+def calc_average_pnl(total_pnl: float, total_days: int) -> float:
+    """
+    Kunlik o'rtacha PnL hisoblaydi.
+    """
+    try:
+        if total_days <= 0:
+            return 0.0
+        return round(total_pnl / total_days, 2)
+    except Exception as e:
+        logger.error(f"calc_average_pnl xato: {e}")
+        return 0.0
+
+
+# ─────────────────────────────────────────────
+# 🕐 VAQT YORDAMCHILARI
+# ─────────────────────────────────────────────
+
+def parse_time_str(time_str: str) -> Optional[tuple[int, int]]:
+    """
+    "HH:MM" formatdagi vaqtni (hour, minute) ga o'giradi.
+    Noto'g'ri format bo'lsa None qaytaradi.
+    """
+    try:
+        parts = time_str.strip().split(":")
+        if len(parts) != 2:
+            return None
+        hour, minute = int(parts[0]), int(parts[1])
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            return None
+        return hour, minute
+    except Exception:
+        return None
+
+
+def format_money(amount: float) -> str:
+    """
+    Pul summasini chiroyli formatda ko'rsatadi.
+    Misol: 1234.5 → "+1,234.50$" yoki "-234.50$"
+    """
+    try:
+        sign = "+" if amount >= 0 else ""
+        return f"{sign}{amount:,.2f}$"
+    except Exception:
+        return f"{amount}$"
+
+
+def format_date(d: date) -> str:
+    """
+    Sanani DD.MM.YYYY formatida qaytaradi.
+    """
+    return d.strftime("%d.%m.%Y")
