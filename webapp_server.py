@@ -6,7 +6,6 @@ Bot bilan bir xil PostgreSQL ga ulanadi.
 import logging
 import uvicorn
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
 
 from database.connection import create_pool, close_pool
 from database.models import init_db
@@ -18,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app):
     """Server ishga tushganda va to'xtaganda."""
     logger.info("WebApp server ishga tushmoqda...")
     await create_pool()
@@ -29,14 +28,10 @@ async def lifespan(app: FastAPI):
     logger.info("WebApp server to'xtatildi.")
 
 
-# ⚠️ Diqqat: app ni import qilishdan OLDIN lifespan tayyor bo'lishi kerak
-# webapp/app.py da app = FastAPI(lifespan=lifespan) emas,
-# shu yerda lifespan ni alohida FastAPI ga bog'laymiz
-app = FastAPI(title="Trade Planner WebApp", lifespan=lifespan)
-
-# webapp routes ni app ga qo'shamiz
-from webapp.app import router as webapp_router  # noqa: E402
-app.include_router(webapp_router)
+# webapp/app.py dagi app ni to'g'ridan import qilamiz
+# lifespan ni alohida o'rnatamiz
+from webapp.app import app  # noqa: E402
+app.router.lifespan_context = lifespan
 
 
 if __name__ == "__main__":
