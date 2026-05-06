@@ -14,8 +14,7 @@ from config import GEMINI_API_KEY
 logger = logging.getLogger(__name__)
 
 GEMINI_URL = (
-    "https://generativelanguage.googleapis.com/v1beta/models/"
-    "gemini-1.5-flash:generateContent"
+    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent"
 )
 
 # Gemini ga yuboriladigan prompt
@@ -37,7 +36,7 @@ Format:
       "swap": -1.20,
       "commission": -0.50,
       "open_time": "2024.01.15 10:30",
-      "close_time": "2024.01.15 14:45",
+      "close_time": "2024.01.15 14:45,
       "order_id": "12345678"
     }
   ]
