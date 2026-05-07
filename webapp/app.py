@@ -287,10 +287,11 @@ async def get_chart_data(telegram_id: int):
         # Har kun uchun:
         # planned = o'sha kun oxiridagi rejalangan balans (murakkab foiz)
         # actual  = o'sha kun oxiridagi haqiqiy balans
-        for i, j in enumerate(journals, 1):
+        for j in journals:
             dates.append(j["date"].strftime("%d.%m"))
             actual_balances.append(float(j["end_balance"] or j["start_balance"]))
-            planned_balances.append(calc_planned_balance(start_bal, rate, i, extra))
+            # ⚠️ day_number ishlatiladi — strategiya boshidan to'g'ri hisob
+            planned_balances.append(calc_planned_balance(start_bal, rate, j["day_number"], extra))
             pnl_values.append(float(j["net_pnl"] or 0))
 
         return JSONResponse({
