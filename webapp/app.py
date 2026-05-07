@@ -275,6 +275,9 @@ async def get_chart_data(telegram_id: int):
         today = get_current_date(settings["timezone"])
         journals = await get_journal_range(user_id, start_date, today)
 
+        if not journals:
+            return JSONResponse({"dates": [], "actual": [], "planned": [], "pnl": []})
+
         dates = []
         actual_balances = []
         planned_balances = []
@@ -284,15 +287,11 @@ async def get_chart_data(telegram_id: int):
         rate = float(settings.get("daily_profit_rate") or 0.1)
         extra = float(settings.get("extra_target") or 0)
 
-        # Har kun uchun:
-        # planned = o'sha kun oxiridagi rejalangan balans (murakkab foiz)
-        # actual  = o'sha kun oxiridagi haqiqiy balans
         for j in journals:
             dates.append(j["date"].strftime("%d.%m"))
-            actual_balances.append(float(j["end_balance"] or j["start_balance"]))
-            # ⚠️ day_number ishlatiladi — strategiya boshidan to'g'ri hisob
-            planned_balances.append(calc_planned_balance(start_bal, rate, j["day_number"], extra))
-            pnl_values.append(float(j["net_pnl"] or 0))
+            actual_balances.append(round(float(j["end_balance"] or j["start_balance"]), 2))
+            planned_balances.append(round(calc_planned_balance(start_bal, rate, int(j["day_number"]), extra), 2))
+            pnl_values.append(round(float(j["net_pnl"] or 0), 2))
 
         return JSONResponse({
             "dates":   dates,
