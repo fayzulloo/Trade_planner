@@ -126,6 +126,16 @@ def _format_plan_message(journal: dict, settings: dict, day_number: int) -> str:
     )
 
     pnl_icon = "🟢" if current_pnl >= 0 else "🔴"
+
+    # Progress — 100% dan oshishi mumkin
+    progress = round((current_pnl / total_target * 100), 1) if total_target > 0 else 0
+
+    # Qoldi — maqsad bajarilgan bo'lsa "Maqsad bajarildi!" ko'rsatiladi
+    if remaining <= 0:
+        remaining_line = "✅ Maqsad bajarildi!"
+    else:
+        remaining_line = f"⏳ Qoldi: {format_money(remaining)}"
+
     carry_line = ""
     if float(journal["carry_over_amount"]) > 0:
         carry_line = f"\n  • Rollover: +{format_money(float(journal['carry_over_amount']))}"
@@ -148,7 +158,7 @@ def _format_plan_message(journal: dict, settings: dict, day_number: int) -> str:
         f"  • Jami: <b>{format_money(total_target)}</b>\n\n"
         f"{pnl_icon} Hozirgi PnL: <b>{format_money(current_pnl)}</b>\n"
         f"📊 Progress: {progress}%\n"
-        f"⏳ Qoldi: {format_money(remaining)}"
+        f"{remaining_line}"
         f"{withdrawal_line}"
     )
 
@@ -200,6 +210,33 @@ async def show_plan(message: Message, user_id: int, **kwargs) -> None:
             await message.answer(
                 "⚠️ Strategiya hali boshlanmagan yoki sozlamalar to'liq emas.",
                 reply_markup=main_menu_kb(),
+            )
+            return
+
+        # Kun allaqachon yakunlanganmi?
+        if journal["is_completed"]:
+            net_pnl = float(journal["net_pnl"] or 0)
+            end_balance = float(journal["end_balance"] or 0)
+            total_target = calc_total_target(
+                float(journal["target_profit"]),
+                float(journal["extra_target"]),
+                float(journal["carry_over_amount"]),
+            )
+            if not journal["is_rolled_over"]:
+                result_line = "✅ Maqsad bajarildi!"
+            else:
+                missing = calc_remaining(total_target, net_pnl)
+                result_line = f"❌ Maqsad bajarilmadi. {format_money(missing)} keyingi kunga o'tadi."
+
+            await message.answer(
+                f"📊 <b>{day_number}-kun yakunlangan</b>\n"
+                f"{'─' * 20}\n"
+                f"🎯 Maqsad: <b>{format_money(total_target)}</b>\n"
+                f"💰 Net PnL: <b>{format_money(net_pnl)}</b>\n"
+                f"🏦 Yakuniy balans: <b>{format_money(end_balance)}</b>\n\n"
+                f"{result_line}",
+                reply_markup=main_menu_kb(),
+                parse_mode="HTML",
             )
             return
 
