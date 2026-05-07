@@ -260,18 +260,16 @@ async def _send_chart(callback: CallbackQuery, user_id: int, date_from: date, da
     targets = []
     planned_balances = []
 
-    running_balance = float(journals[0]["start_balance"])
-    for j in journals:
-        end_bal = float(j["end_balance"] or j["start_balance"])
-        actual_balances.append(end_bal)
-        pnl_values.append(float(j["net_pnl"] or 0))
-        targets.append(float(j["target_profit"]) + float(j["extra_target"]) + float(j["carry_over_amount"]))
-
-    # Rejalangan balans
     start_bal = float(settings["starting_balance"] or 0)
     rate = float(settings["daily_profit_rate"] or 0.1)
     extra = float(settings["extra_target"] or 0)
-    for i in range(1, len(journals) + 1):
+
+    for i, j in enumerate(journals, 1):
+        # Yakunlanmagan kun bo'lsa start_balance, yakunlangan bo'lsa end_balance
+        actual_balances.append(float(j["end_balance"] or j["start_balance"]))
+        pnl_values.append(float(j["net_pnl"] or 0))
+        targets.append(float(j["target_profit"]) + float(j["extra_target"]) + float(j["carry_over_amount"]))
+        # Har kun uchun rejalangan = o'sha kun oxiridagi murakkab foiz
         planned_balances.append(calc_planned_balance(start_bal, rate, i, extra))
 
     img_bytes = create_balance_chart(dates, actual_balances, planned_balances, title)

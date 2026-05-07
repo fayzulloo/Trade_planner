@@ -11,7 +11,7 @@
 <div class="app">
 
   <!-- Header -->
-  <div class="header">
+  <div class="header" id="main-header">
     <div class="header-top">
       <h2>📊 Trade Planner</h2>
       <span class="header-badge">DASHBOARD</span>
@@ -23,139 +23,120 @@
     </div>
   </div>
 
-  <!-- ── Overview Tab ── -->
-  <div class="tab-content active" id="tab-overview">
+  <!-- Detail header (yashirin) -->
+  <div class="header" id="detail-header" style="display:none">
+    <div class="header-top">
+      <button class="back-btn" id="back-btn">← Orqaga</button>
+      <span class="header-badge" id="detail-badge">KUN</span>
+    </div>
+  </div>
 
-    <!-- Balans -->
-    <div class="card">
-      <div class="card-title">💰 Balans</div>
-      <div class="balance-row">
-        <div class="balance-item">
-          <span class="label">Haqiqiy</span>
-          <span class="value actual" id="actual-balance">—</span>
+  <!-- ── Main view ── -->
+  <div id="main-view">
+
+    <!-- Overview Tab -->
+    <div class="tab-content active" id="tab-overview">
+      <div class="card">
+        <div class="card-title">💰 Balans</div>
+        <div class="balance-row">
+          <div class="balance-item">
+            <span class="label">Haqiqiy</span>
+            <span class="value actual" id="actual-balance">—</span>
+          </div>
+          <div class="balance-divider"></div>
+          <div class="balance-item">
+            <span class="label">Rejalangan</span>
+            <span class="value planned" id="planned-balance">—</span>
+          </div>
         </div>
-        <div class="balance-divider"></div>
-        <div class="balance-item">
-          <span class="label">Rejalangan</span>
-          <span class="value planned" id="planned-balance">—</span>
+        <div class="balance-diff">
+          <span class="diff-label">Farq (haqiqiy − reja)</span>
+          <span class="diff-value" id="balance-diff-val">—</span>
         </div>
       </div>
-      <div class="balance-diff">
-        <span class="diff-label">Farq (haqiqiy − reja)</span>
-        <span class="diff-value" id="balance-diff-val">—</span>
+      <div class="card">
+        <div class="card-title">📈 Progress</div>
+        <div class="progress-row">
+          <span class="progress-label">Kunlar</span>
+          <div class="progress-bar"><div class="progress-fill blue" id="progress-days"></div></div>
+          <span class="progress-val" id="progress-days-text">0/0</span>
+        </div>
+        <div class="progress-row">
+          <span class="progress-label">Maqsad</span>
+          <div class="progress-bar"><div class="progress-fill green" id="progress-balance"></div></div>
+          <span class="progress-val" id="progress-balance-text">0%</span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">🎯 Natijalar</div>
+        <div class="stats-grid">
+          <div class="stat-item"><span class="stat-label">Jami PnL</span><span class="stat-value" id="total-pnl">—</span></div>
+          <div class="stat-item"><span class="stat-label">Win Rate</span><span class="stat-value gold" id="win-rate">—</span></div>
+          <div class="stat-item"><span class="stat-label">✅ Bajarildi</span><span class="stat-value green" id="win-days">—</span></div>
+          <div class="stat-item"><span class="stat-label">❌ Rollover</span><span class="stat-value red" id="loss-days">—</span></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">⚙️ Sozlamalar</div>
+        <div class="setting-row"><span class="s-label">Boshlang'ich balans</span><span class="s-value" id="s-starting">—</span></div>
+        <div class="setting-row"><span class="s-label">Kunlik foiz</span><span class="s-value" id="s-rate">—</span></div>
+        <div class="setting-row"><span class="s-label">Kun soni</span><span class="s-value" id="s-days">—</span></div>
+        <div class="setting-row"><span class="s-label">Boshlanish sanasi</span><span class="s-value" id="s-start">—</span></div>
+        <div class="setting-row"><span class="s-label">Broker</span><span class="s-value" id="s-broker">—</span></div>
       </div>
     </div>
 
-    <!-- Progress -->
-    <div class="card">
-      <div class="card-title">📈 Progress</div>
-      <div class="progress-row">
-        <span class="progress-label">Kunlar</span>
-        <div class="progress-bar">
-          <div class="progress-fill blue" id="progress-days"></div>
-        </div>
-        <span class="progress-val" id="progress-days-text">0/0</span>
-      </div>
-      <div class="progress-row">
-        <span class="progress-label">Maqsad</span>
-        <div class="progress-bar">
-          <div class="progress-fill green" id="progress-balance"></div>
-        </div>
-        <span class="progress-val" id="progress-balance-text">0%</span>
-      </div>
-    </div>
-
-    <!-- Natijalar -->
-    <div class="card">
-      <div class="card-title">🎯 Natijalar</div>
-      <div class="stats-grid">
-        <div class="stat-item">
-          <span class="stat-label">Jami PnL</span>
-          <span class="stat-value" id="total-pnl">—</span>
-        </div>
-        <div class="stat-item">
-          <span class="stat-label">Win Rate</span>
-          <span class="stat-value gold" id="win-rate">—</span>
-        </div>
-        <div class="stat-item">
-          <span class="stat-label">✅ Bajarildi</span>
-          <span class="stat-value green" id="win-days">—</span>
-        </div>
-        <div class="stat-item">
-          <span class="stat-label">❌ Rollover</span>
-          <span class="stat-value red" id="loss-days">—</span>
+    <!-- Journal Tab -->
+    <div class="tab-content" id="tab-journal">
+      <div class="card">
+        <div class="card-title">📋 Kunlik jurnal</div>
+        <div class="table-wrapper">
+          <table class="journal-table">
+            <thead>
+              <tr><th>Kun</th><th>Sana</th><th>Maqsad</th><th>PnL</th><th>Holat</th></tr>
+            </thead>
+            <tbody id="journal-tbody">
+              <tr><td colspan="5"><div class="loading-state"><div class="spinner"></div></div></td></tr>
+            </tbody>
+          </table>
         </div>
       </div>
     </div>
 
-    <!-- Sozlamalar -->
-    <div class="card">
-      <div class="card-title">⚙️ Sozlamalar</div>
-      <div class="setting-row">
-        <span class="s-label">Boshlang'ich balans</span>
-        <span class="s-value" id="s-starting">—</span>
+    <!-- Chart Tab -->
+    <div class="tab-content" id="tab-chart">
+      <div class="card">
+        <div class="card-title">📈 Balans o'sishi</div>
+        <div id="chart-balance-wrap"><div class="loading-state"><div class="spinner"></div></div></div>
       </div>
-      <div class="setting-row">
-        <span class="s-label">Kunlik foiz</span>
-        <span class="s-value" id="s-rate">—</span>
-      </div>
-      <div class="setting-row">
-        <span class="s-label">Kun soni</span>
-        <span class="s-value" id="s-days">—</span>
-      </div>
-      <div class="setting-row">
-        <span class="s-label">Boshlanish sanasi</span>
-        <span class="s-value" id="s-start">—</span>
-      </div>
-      <div class="setting-row">
-        <span class="s-label">Broker</span>
-        <span class="s-value" id="s-broker">—</span>
+      <div class="card">
+        <div class="card-title">📊 Kunlik PnL</div>
+        <div id="chart-pnl-wrap"><div class="loading-state"><div class="spinner"></div></div></div>
       </div>
     </div>
 
   </div>
 
-  <!-- ── Journal Tab ── -->
-  <div class="tab-content" id="tab-journal">
-    <div class="card">
-      <div class="card-title">📋 Kunlik jurnal</div>
-      <div class="table-wrapper">
-        <table class="journal-table">
-          <thead>
-            <tr>
-              <th>Kun</th>
-              <th>Sana</th>
-              <th>Maqsad</th>
-              <th>PnL</th>
-              <th>Holat</th>
-            </tr>
-          </thead>
-          <tbody id="journal-tbody">
-            <tr><td colspan="5">
-              <div class="loading-state">
-                <div class="spinner"></div>
-              </div>
-            </td></tr>
-          </tbody>
-        </table>
+  <!-- ── Detail view ── -->
+  <div id="detail-view" style="display:none">
+    <div style="padding:14px 14px 0">
+
+      <!-- Kun xulosasi -->
+      <div class="card" id="day-summary-card"></div>
+
+      <!-- Savdolar ro'yxati -->
+      <div class="card">
+        <div class="card-title">📋 Savdolar</div>
+        <div id="trades-list"></div>
       </div>
+
     </div>
   </div>
 
-  <!-- ── Chart Tab ── -->
-  <div class="tab-content" id="tab-chart">
-    <div class="card">
-      <div class="card-title">📈 Balans o'sishi</div>
-      <div id="chart-balance-wrap">
-        <div class="loading-state"><div class="spinner"></div></div>
-      </div>
-    </div>
-    <div class="card">
-      <div class="card-title">📊 Kunlik PnL</div>
-      <div id="chart-pnl-wrap">
-        <div class="loading-state"><div class="spinner"></div></div>
-      </div>
-    </div>
+  <!-- ── Trade detail modal ── -->
+  <div id="trade-modal" class="modal" style="display:none">
+    <div class="modal-backdrop" id="modal-backdrop"></div>
+    <div class="modal-content" id="modal-content"></div>
   </div>
 
 </div>

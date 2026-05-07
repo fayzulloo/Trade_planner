@@ -172,7 +172,92 @@ async def get_journal(telegram_id: int, limit: int = 30):
         raise HTTPException(status_code=500, detail="Server xatosi")
 
 
-@app.get("/api/chart_data")
+@app.get("/api/day_detail")
+async def get_day_detail(telegram_id: int, day_number: int):
+    """
+    Kun detail sahifasi — journal + savdolar ro'yxati.
+    """
+    user_id = await _get_user_id_from_telegram(telegram_id)
+    if not user_id:
+        raise HTTPException(status_code=404, detail="Foydalanuvchi topilmadi")
+
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            # Journal
+            journal = await conn.fetchrow("""
+                SELECT * FROM daily_journal
+                WHERE user_id = $1 AND day_number = $2;
+            """, user_id, day_number)
+
+            if not journal:
+                raise HTTPException(status_code=404, detail="Jurnal topilmadi")
+
+            # Savdolar
+            trades = await conn.fetch("""
+                SELECT * FROM trades
+                WHERE user_id = $1 AND day_number = $2
+                ORDER BY created_at ASC;
+            """, user_id, day_number)
+
+        total_target = (
+            float(journal["target_profit"]) +
+            float(journal["extra_target"]) +
+            float(journal["carry_over_amount"])
+        )
+
+        trades_list = []
+        for t in trades:
+            net = float(t["pnl"]) + float(t["swap"] or 0) + float(t["commission"] or 0)
+            # TP/SL aniqlash: exit_price ga qarab
+            if float(t["pnl"]) > 0:
+                result = "tp"
+            elif float(t["pnl"]) < 0:
+                result = "sl"
+            else:
+                result = "be"  # breakeven
+
+            trades_list.append({
+                "id":           t["id"],
+                "symbol":       t["symbol"],
+                "direction":    t["direction"],
+                "entry_price":  float(t["entry_price"]),
+                "exit_price":   float(t["exit_price"]),
+                "quantity":     float(t["quantity"]),
+                "pnl":          float(t["pnl"]),
+                "swap":         float(t["swap"] or 0),
+                "commission":   float(t["commission"] or 0),
+                "net_pnl":      round(net, 2),
+                "open_time":    t["open_time"] or "",
+                "close_time":   t["close_time"] or "",
+                "order_id":     t["order_id"] or "",
+                "broker":       t["broker"] or "",
+                "result":       result,
+            })
+
+        return JSONResponse({
+            "journal": {
+                "day_number":      journal["day_number"],
+                "date":            journal["date"].strftime("%d.%m.%Y"),
+                "start_balance":   float(journal["start_balance"]),
+                "end_balance":     float(journal["end_balance"] or 0),
+                "target_profit":   float(journal["target_profit"]),
+                "extra_target":    float(journal["extra_target"]),
+                "carry_over":      float(journal["carry_over_amount"]),
+                "total_target":    total_target,
+                "net_pnl":         float(journal["net_pnl"] or 0),
+                "actual_pnl":      float(journal["actual_pnl"] or 0),
+                "withdrawal":      float(journal["withdrawal_amount"] or 0),
+                "is_completed":    journal["is_completed"],
+                "is_rolled_over":  journal["is_rolled_over"],
+            },
+            "trades": trades_list,
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"get_day_detail xato [telegram_id={telegram_id}]: {e}")
+        raise HTTPException(status_code=500, detail="Server xatosi")
 async def get_chart_data(telegram_id: int):
     """
     Grafik tab — balans va PnL ma'lumotlari.
@@ -199,6 +284,9 @@ async def get_chart_data(telegram_id: int):
         rate = float(settings.get("daily_profit_rate") or 0.1)
         extra = float(settings.get("extra_target") or 0)
 
+        # Har kun uchun:
+        # planned = o'sha kun oxiridagi rejalangan balans (murakkab foiz)
+        # actual  = o'sha kun oxiridagi haqiqiy balans
         for i, j in enumerate(journals, 1):
             dates.append(j["date"].strftime("%d.%m"))
             actual_balances.append(float(j["end_balance"] or j["start_balance"]))
