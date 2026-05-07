@@ -258,6 +258,8 @@ async def get_day_detail(telegram_id: int, day_number: int):
     except Exception as e:
         logger.error(f"get_day_detail xato [telegram_id={telegram_id}]: {e}")
         raise HTTPException(status_code=500, detail="Server xatosi")
+
+@app.get("/api/chart_data")
 async def get_chart_data(telegram_id: int):
     """
     Grafik tab — balans va PnL ma'lumotlari.
