@@ -290,7 +290,31 @@ async def get_chart_data(telegram_id: int):
         journals = await get_journal_range(user_id, start_date, today)
 
         if not journals:
-            return JSONResponse({"dates": [], "actual": [], "planned": [], "pnl": []})
+            # Journal yo'q bo'lsa ham rejalangan chiziqni ko'rsatamiz
+            planned_dates    = [start_date.strftime("%d.%m")]
+            planned_balances = [start_bal]
+
+            from datetime import timedelta
+            from utils.calculator import is_rest_day as _is_rest_day
+
+            current   = start_date
+            day_count = 0
+            while day_count < total_days:
+                if not _is_rest_day(current, rest_days):
+                    day_count += 1
+                    planned_dates.append(current.strftime("%d.%m"))
+                    planned_balances.append(round(calc_planned_balance(start_bal, rate, day_count, extra), 2))
+                current += timedelta(days=1)
+                if (current - start_date).days > total_days * 3:
+                    break
+
+            return JSONResponse({
+                "actual_dates":  [],
+                "actual":        [],
+                "pnl":           [],
+                "planned_dates": planned_dates,
+                "planned":       planned_balances,
+            })
 
         dates = []
         actual_balances = []

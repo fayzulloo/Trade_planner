@@ -343,13 +343,13 @@ let balChart = null, pnlChart = null;
 
 async function loadCharts() {
   const data = await apiFetch('/api/chart_data');
-  if (!data?.dates?.length) {
+  if (!data?.planned_dates?.length) {
     document.getElementById('chart-balance-wrap').innerHTML = '<div class="empty-state">Ma\'lumot yetarli emas</div>';
     document.getElementById('chart-pnl-wrap').innerHTML = '';
     return;
   }
 
-  const { actual_dates, actual, planned_dates, planned, pnl } = data;
+  const { actual_dates = [], actual = [], planned_dates, planned, pnl = [] } = data;
 
   // Ikkala dataset uchun alohida labellar
   const grid = 'rgba(255,255,255,0.06)', hint = '#5a6478';
