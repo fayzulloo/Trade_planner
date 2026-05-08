@@ -297,21 +297,45 @@ async def get_chart_data(telegram_id: int):
         planned_balances = []
         pnl_values = []
 
-        start_bal = float(settings.get("starting_balance") or 0)
-        rate = float(settings.get("daily_profit_rate") or 0.1)
-        extra = float(settings.get("extra_target") or 0)
+        start_bal  = float(settings.get("starting_balance") or 0)
+        rate       = float(settings.get("daily_profit_rate") or 0.1)
+        extra      = float(settings.get("extra_target") or 0)
+        total_days = int(settings.get("total_days") or 0)
+        rest_days  = settings.get("rest_days") or ""
 
+        # Haqiqiy kunlar — faqat mavjud journal yozuvlari
+        actual_dates    = []
+        actual_balances = []
+        pnl_values      = []
         for j in journals:
-            dates.append(j["date"].strftime("%d.%m"))
+            actual_dates.append(j["date"].strftime("%d.%m"))
             actual_balances.append(round(float(j["end_balance"] or j["start_balance"]), 2))
-            planned_balances.append(round(calc_planned_balance(start_bal, rate, int(j["day_number"]), extra), 2))
             pnl_values.append(round(float(j["net_pnl"] or 0), 2))
 
+        # Rejalangan — 0-kundan (5000$) total_days gacha to'liq chiziq
+        planned_dates    = [start_date.strftime("%d.%m")]
+        planned_balances = [start_bal]
+
+        from datetime import timedelta
+        from utils.calculator import is_rest_day as _is_rest_day
+
+        current = start_date
+        day_count = 0
+        while day_count < total_days:
+            if not _is_rest_day(current, rest_days):
+                day_count += 1
+                planned_dates.append(current.strftime("%d.%m"))
+                planned_balances.append(round(calc_planned_balance(start_bal, rate, day_count, extra), 2))
+            current += timedelta(days=1)
+            if (current - start_date).days > total_days * 3:
+                break
+
         return JSONResponse({
-            "dates":   dates,
-            "actual":  actual_balances,
-            "planned": planned_balances,
-            "pnl":     pnl_values,
+            "actual_dates":    actual_dates,
+            "actual":          actual_balances,
+            "pnl":             pnl_values,
+            "planned_dates":   planned_dates,
+            "planned":         planned_balances,
         })
     except Exception as e:
         logger.error(f"get_chart_data xato [telegram_id={telegram_id}]: {e}")

@@ -349,13 +349,19 @@ async function loadCharts() {
     return;
   }
 
-  const { dates, actual, planned, pnl } = data;
+  const { actual_dates, actual, planned_dates, planned, pnl } = data;
+
+  // Ikkala dataset uchun alohida labellar
   const grid = 'rgba(255,255,255,0.06)', hint = '#5a6478';
 
-  const scales = {
-    x: { ticks: { color: hint, font: { size: 10, family: "'JetBrains Mono'" }, maxRotation: 45 }, grid: { color: grid, drawBorder: false } },
-    y: { ticks: { color: hint, font: { size: 10, family: "'JetBrains Mono'" }, callback: v => `$${Number(v).toLocaleString()}` }, grid: { color: grid, drawBorder: false } },
+  const yScale = {
+    ticks: { color: hint, font: { size: 10, family: "'JetBrains Mono'" }, callback: v => `$${Number(v).toLocaleString()}` },
+    grid: { color: grid, drawBorder: false },
   };
+  const xScale = (labels) => ({
+    ticks: { color: hint, font: { size: 10, family: "'JetBrains Mono'" }, maxRotation: 45, maxTicksLimit: 8 },
+    grid: { color: grid, drawBorder: false },
+  });
 
   document.getElementById('chart-balance-wrap').innerHTML = '<canvas id="balance-chart" height="220"></canvas>';
   const balCtx = document.getElementById('balance-chart')?.getContext('2d');
@@ -364,20 +370,45 @@ async function loadCharts() {
     balChart = new Chart(balCtx, {
       type: 'line',
       data: {
-        labels: dates,
         datasets: [
-          { label: 'Haqiqiy', data: actual, borderColor: '#00e096', backgroundColor: 'rgba(0,224,150,0.08)', borderWidth: 2, pointRadius: 3, pointBackgroundColor: '#00e096', fill: true, tension: 0.35 },
-          { label: 'Rejalangan', data: planned, borderColor: '#4d9fff', borderWidth: 1.5, borderDash: [5,5], pointRadius: 0, fill: false, tension: 0.35 },
+          {
+            label: 'Haqiqiy',
+            data: actual_dates.map((d, i) => ({ x: d, y: actual[i] })),
+            borderColor: '#00e096',
+            backgroundColor: 'rgba(0,224,150,0.08)',
+            borderWidth: 2,
+            pointRadius: 3,
+            pointBackgroundColor: '#00e096',
+            fill: true,
+            tension: 0.35,
+          },
+          {
+            label: 'Rejalangan',
+            data: planned_dates.map((d, i) => ({ x: d, y: planned[i] })),
+            borderColor: '#4d9fff',
+            borderWidth: 1.5,
+            borderDash: [5, 5],
+            pointRadius: 0,
+            fill: false,
+            tension: 0.35,
+          },
         ],
       },
       options: {
         responsive: true,
+        parsing: false,
         plugins: {
           legend: { labels: { color: '#8892a4', font: { size: 11 }, boxWidth: 12, padding: 16 } },
-          tooltip: { backgroundColor: '#1a1e2a', borderColor: 'rgba(255,255,255,0.1)', borderWidth: 1, titleColor: '#e8eaf0', bodyColor: '#8892a4',
-            callbacks: { label: ctx => ` ${ctx.dataset.label}: $${Number(ctx.raw).toLocaleString('en-US', { minimumFractionDigits: 2 })}` } },
+          tooltip: {
+            backgroundColor: '#1a1e2a', borderColor: 'rgba(255,255,255,0.1)', borderWidth: 1,
+            titleColor: '#e8eaf0', bodyColor: '#8892a4',
+            callbacks: { label: ctx => ` ${ctx.dataset.label}: $${Number(ctx.parsed.y).toLocaleString('en-US', { minimumFractionDigits: 2 })}` },
+          },
         },
-        scales,
+        scales: {
+          x: { type: 'category', ticks: { color: hint, font: { size: 10, family: "'JetBrains Mono'" }, maxRotation: 45, maxTicksLimit: 8 }, grid: { color: grid, drawBorder: false } },
+          y: yScale,
+        },
         interaction: { mode: 'index', intersect: false },
       },
     });
@@ -390,18 +421,28 @@ async function loadCharts() {
     pnlChart = new Chart(pnlCtx, {
       type: 'bar',
       data: {
-        labels: dates,
-        datasets: [{ label: 'Kunlik PnL', data: pnl,
+        labels: actual_dates,
+        datasets: [{
+          label: 'Kunlik PnL', data: pnl,
           backgroundColor: pnl.map(v => v >= 0 ? 'rgba(0,224,150,0.65)' : 'rgba(255,77,106,0.65)'),
           borderColor: pnl.map(v => v >= 0 ? '#00e096' : '#ff4d6a'),
-          borderWidth: 1, borderRadius: 4 }],
+          borderWidth: 1, borderRadius: 4,
+        }],
       },
       options: {
         responsive: true,
-        plugins: { legend: { display: false },
-          tooltip: { backgroundColor: '#1a1e2a', borderColor: 'rgba(255,255,255,0.1)', borderWidth: 1, titleColor: '#e8eaf0', bodyColor: '#8892a4',
-            callbacks: { label: ctx => ` PnL: ${ctx.raw >= 0 ? '+' : ''}$${Number(ctx.raw).toLocaleString('en-US', { minimumFractionDigits: 2 })}` } } },
-        scales,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: '#1a1e2a', borderColor: 'rgba(255,255,255,0.1)', borderWidth: 1,
+            titleColor: '#e8eaf0', bodyColor: '#8892a4',
+            callbacks: { label: ctx => ` PnL: ${ctx.raw >= 0 ? '+' : ''}$${Number(ctx.raw).toLocaleString('en-US', { minimumFractionDigits: 2 })}` },
+          },
+        },
+        scales: {
+          x: { ticks: { color: hint, font: { size: 10, family: "'JetBrains Mono'" }, maxRotation: 45 }, grid: { color: grid, drawBorder: false } },
+          y: yScale,
+        },
       },
     });
   }
