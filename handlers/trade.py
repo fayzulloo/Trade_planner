@@ -218,10 +218,11 @@ async def trade_sl(message: Message, state: FSMContext, **kwargs) -> None:
             await message.answer("⚠️ Raqam kiriting yoki o'tkazib yuboring:", reply_markup=skip_kb())
             return
 
+    no_text = "yo'q"
     await state.update_data(sl_price=sl_price)
     await state.set_state(TradeForm.tp)
     await message.answer(
-        f"✅ SL: <b>{sl_price or "yo'q"}</b>\n\n"
+        f"✅ SL: <b>{sl_price or no_text}</b>\n\n"
         f"Take Profit narxini kiriting (yo'q bo'lsa — kiritmang):",
         reply_markup=skip_kb(),
         parse_mode="HTML",
@@ -240,10 +241,11 @@ async def trade_tp(message: Message, state: FSMContext, **kwargs) -> None:
             await message.answer("⚠️ Raqam kiriting yoki o'tkazib yuboring:", reply_markup=skip_kb())
             return
 
+    no_text = "yo'q"
     await state.update_data(tp_price=tp_price)
     await state.set_state(TradeForm.result)
     await message.answer(
-        f"✅ TP: <b>{tp_price or 'yo\'q'}</b>\n\n"
+        f"✅ TP: <b>{tp_price or no_text}</b>\n\n"
         f"Savdo natijasini tanlang:",
         reply_markup=trade_result_kb(),
         parse_mode="HTML",
