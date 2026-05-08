@@ -221,7 +221,7 @@ async def trade_sl(message: Message, state: FSMContext, **kwargs) -> None:
     await state.update_data(sl_price=sl_price)
     await state.set_state(TradeForm.tp)
     await message.answer(
-        f"✅ SL: <b>{sl_price or 'yo\'q'}</b>\n\n"
+        f"✅ SL: <b>{sl_price or "yo'q"}</b>\n\n"
         f"Take Profit narxini kiriting (yo'q bo'lsa — kiritmang):",
         reply_markup=skip_kb(),
         parse_mode="HTML",
