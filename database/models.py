@@ -131,6 +131,10 @@ async def migrate_db() -> None:
             ("trades",   "swap",                   "NUMERIC(12,2) DEFAULT 0"),
             ("trades",   "commission",             "NUMERIC(12,2) DEFAULT 0"),
             ("trades",   "broker",                 "TEXT DEFAULT NULL"),
+            # trades — sl/tp/result
+            ("trades",   "sl_price",               "NUMERIC(12,5) DEFAULT NULL"),
+            ("trades",   "tp_price",               "NUMERIC(12,5) DEFAULT NULL"),
+            ("trades",   "result",                 "TEXT DEFAULT NULL"),
             # daily_journal
             ("daily_journal", "extra_target",      "NUMERIC(12,2) DEFAULT 0"),
             ("daily_journal", "carry_over_amount", "NUMERIC(12,2) DEFAULT 0"),

@@ -14,7 +14,8 @@ from config import GEMINI_API_KEY
 logger = logging.getLogger(__name__)
 
 GEMINI_URL = (
-    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent"
+    "https://generativelanguage.googleapis.com/v1beta/models/"
+    "gemini-1.5-flash:generateContent"
 )
 
 # Gemini ga yuboriladigan prompt
@@ -36,8 +37,11 @@ Format:
       "swap": -1.20,
       "commission": -0.50,
       "open_time": "2024.01.15 10:30",
-      "close_time": "2024.01.15 14:45,
-      "order_id": "12345678"
+      "close_time": "2024.01.15 14:45",
+      "order_id": "12345678",
+      "sl_price": 2330.00,
+      "tp_price": 2360.00,
+      "result": "tp"
     }
   ]
 }
@@ -45,6 +49,10 @@ Format:
 Qoidalar:
 - direction faqat "BUY" yoki "SELL"
 - pnl, swap, commission raqam (manfiy bo'lishi mumkin)
+- sl_price: skrinshotda S/L narxi ko'rsatilgan bo'lsa yoz, yo'q bo'lsa null
+- tp_price: skrinshotda T/P narxi ko'rsatilgan bo'lsa yoz, yo'q bo'lsa null
+- result: savdo qanday yopilgani — "tp" (take profit ishladi), "sl" (stop loss ishladi), "manual" (qo'lda yopildi)
+  * Rasmda aniq ko'rinmasa — pnl musbat bo'lsa "tp", manfiy bo'lsa "sl", noaniq bo'lsa "manual" deb bel
 - Topilmagan maydonlar uchun null yoz
 - Faqat YOPIQ savdolar (open pozitsiyalar emas)
 - Agar savdo topilmasa: {"trades": []}
@@ -143,6 +151,9 @@ async def analyze_mt5_screenshot(image_bytes: bytes) -> Optional[list[dict]]:
                 "open_time":   t.get("open_time"),
                 "close_time":  t.get("close_time"),
                 "order_id":    str(t.get("order_id")) if t.get("order_id") else None,
+                "sl_price":    float(t["sl_price"]) if t.get("sl_price") else None,
+                "tp_price":    float(t["tp_price"]) if t.get("tp_price") else None,
+                "result":      t.get("result") if t.get("result") in ("tp", "sl", "manual") else None,
             })
 
         logger.info(f"Gemini {len(validated)} ta savdo aniqladi.")

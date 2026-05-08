@@ -116,6 +116,9 @@ async def add_trade(
     close_time: Optional[str] = None,
     order_id: Optional[str] = None,
     broker: Optional[str] = None,
+    sl_price: Optional[float] = None,
+    tp_price: Optional[float] = None,
+    result: Optional[str] = None,  # 'tp', 'sl', 'manual'
 ) -> Record:
     """
     Yangi savdo yozuvini qo'shadi.
@@ -131,20 +134,19 @@ async def add_trade(
                         user_id, day_number, symbol, direction,
                         entry_price, exit_price, quantity, pnl,
                         swap, commission, open_time, close_time,
-                        order_id, broker
+                        order_id, broker, sl_price, tp_price, result
                     ) VALUES (
                         $1, $2, $3, $4,
                         $5, $6, $7, $8,
                         $9, $10, $11, $12,
-                        $13, $14
+                        $13, $14, $15, $16, $17
                     ) RETURNING *;
                 """, user_id, day_number, symbol, direction,
                     entry_price, exit_price, quantity, pnl,
                     swap, commission, open_time, close_time,
-                    order_id, broker)
+                    order_id, broker, sl_price, tp_price, result)
 
                 # Bugungi journal actual_pnl ni yangilash
-                # ⚠️ Diqqat: actual_pnl faqat pnl (swap/commission siz)
                 await conn.execute("""
                     UPDATE daily_journal
                     SET actual_pnl = actual_pnl + $1

@@ -246,9 +246,10 @@ canvas{display:block;width:100%!important;border-radius:var(--radius-sm)}
   border-radius: 4px;
   flex-shrink: 0;
 }
-.trade-side-bar.tp { background: var(--green); }
-.trade-side-bar.sl { background: var(--red); }
-.trade-side-bar.be { background: var(--text-muted); }
+.trade-side-bar.tp     { background: var(--green); }
+.trade-side-bar.sl     { background: var(--red); }
+.trade-side-bar.manual { background: var(--text-muted); }
+.trade-side-bar.be     { background: var(--text-muted); }
 
 .trade-main { flex: 1; min-width: 0; }
 

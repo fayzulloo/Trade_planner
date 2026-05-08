@@ -286,6 +286,16 @@ function openTradeModal(idx) {
     </div>
 
     ${t.open_time || t.close_time ? `<div class="modal-divider"></div>` : ''}
+    ${t.sl_price ? `
+    <div class="modal-row">
+      <span class="m-label">Stop Loss</span>
+      <span class="m-value pnl-neg">${fmtPrice(t.sl_price)}</span>
+    </div>` : ''}
+    ${t.tp_price ? `
+    <div class="modal-row">
+      <span class="m-label">Take Profit</span>
+      <span class="m-value pnl-pos">${fmtPrice(t.tp_price)}</span>
+    </div>` : ''}
     ${t.open_time ? `
     <div class="modal-row">
       <span class="m-label">Ochilish vaqti</span>

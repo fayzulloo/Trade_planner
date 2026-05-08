@@ -102,13 +102,22 @@ async def get_overview(telegram_id: int):
                 "loss_days":       int(stats.get("loss_days") or 0),
             }
 
-        # Rejalangan balans
+        # Rejalangan balans — bugungi kun raqami asosida
+        from utils.calculator import get_day_number, is_strategy_finished
+        today_day_number = 0
+        if start_date:
+            today_day_number = get_day_number(
+                start_date, today,
+                settings.get("rest_days") or "",
+                int(settings.get("total_days") or 0),
+            ) or 0
+
         planned = calc_planned_balance(
             float(settings.get("starting_balance") or 0),
             float(settings.get("daily_profit_rate") or 0.1),
-            summary["total_days"] if summary else 0,
+            today_day_number,
             float(settings.get("extra_target") or 0),
-        ) if summary else float(settings.get("starting_balance") or 0)
+        ) if today_day_number > 0 else float(settings.get("starting_balance") or 0)
 
         return JSONResponse({
             "settings": {
@@ -232,7 +241,9 @@ async def get_day_detail(telegram_id: int, day_number: int):
                 "close_time":   t["close_time"] or "",
                 "order_id":     t["order_id"] or "",
                 "broker":       t["broker"] or "",
-                "result":       result,
+                "sl_price":     float(t["sl_price"]) if t["sl_price"] else None,
+                "tp_price":     float(t["tp_price"]) if t["tp_price"] else None,
+                "result":       t["result"] or "manual",
             })
 
         return JSONResponse({
@@ -258,6 +269,7 @@ async def get_day_detail(telegram_id: int, day_number: int):
     except Exception as e:
         logger.error(f"get_day_detail xato [telegram_id={telegram_id}]: {e}")
         raise HTTPException(status_code=500, detail="Server xatosi")
+
 
 @app.get("/api/chart_data")
 async def get_chart_data(telegram_id: int):

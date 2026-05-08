@@ -356,3 +356,27 @@ def strategy_finished_kb() -> InlineKeyboardMarkup:
         callback_data="new_strategy",
     ))
     return builder.as_markup()
+
+
+# ─────────────────────────────────────────────
+# 📝 SAVDO SL/TP/RESULT
+# ─────────────────────────────────────────────
+
+def skip_kb() -> InlineKeyboardMarkup:
+    """SL/TP kiritishda o'tkazib yuborish tugmasi."""
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="⏭ O'tkazib yuborish", callback_data="skip_field"))
+    builder.row(InlineKeyboardButton(text="❌ Bekor qilish", callback_data="trade_cancel"))
+    return builder.as_markup()
+
+
+def trade_result_kb() -> InlineKeyboardMarkup:
+    """Savdo natijasini tanlash tugmalari."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="🟢 TP ishladi", callback_data="result_tp"),
+        InlineKeyboardButton(text="🔴 SL ishladi", callback_data="result_sl"),
+    )
+    builder.row(InlineKeyboardButton(text="⚪ Qo'lda yopildi", callback_data="result_manual"))
+    builder.row(InlineKeyboardButton(text="❌ Bekor qilish", callback_data="trade_cancel"))
+    return builder.as_markup()

@@ -14,7 +14,7 @@ from database.queries import get_settings, get_today_journal, add_trade
 from handlers.keyboards import (
     direction_kb, cancel_trade_kb,
     mt5_trades_list_kb, mt5_edit_fields_kb, mt5_after_edit_kb,
-    plan_kb,
+    plan_kb, skip_kb, trade_result_kb,
 )
 from utils.calculator import get_current_date, parse_start_date, get_day_number
 from utils.mt5_analyzer import analyze_mt5_screenshot
@@ -35,6 +35,9 @@ class TradeForm(StatesGroup):
     exit      = State()
     quantity  = State()
     pnl       = State()
+    sl        = State()
+    tp        = State()
+    result    = State()
 
 
 class MT5EditForm(StatesGroup):
@@ -185,13 +188,78 @@ async def trade_quantity(message: Message, state: FSMContext, **kwargs) -> None:
 
 
 @router.message(TradeForm.pnl)
-async def trade_pnl(message: Message, state: FSMContext, user_id: int, **kwargs) -> None:
-    """PnL kiritildi — savdoni saqlash."""
+async def trade_pnl(message: Message, state: FSMContext, **kwargs) -> None:
+    """PnL kiritildi — SL ga o'tish."""
     try:
         pnl = float(message.text.replace(",", ".").replace("+", ""))
     except ValueError:
         await message.answer("⚠️ Raqam kiriting (masalan: +125.50 yoki -30.00):", reply_markup=cancel_trade_kb())
         return
+
+    await state.update_data(pnl=pnl)
+    await state.set_state(TradeForm.sl)
+    await message.answer(
+        f"✅ PnL: <b>{pnl:+.2f}$</b>\n\n"
+        f"Stop Loss narxini kiriting (yo'q bo'lsa — kiritmang):",
+        reply_markup=skip_kb(),
+        parse_mode="HTML",
+    )
+
+
+@router.message(TradeForm.sl)
+async def trade_sl(message: Message, state: FSMContext, **kwargs) -> None:
+    """SL kiritildi."""
+    text = message.text.strip()
+    sl_price = None
+    if text and text.lower() not in ("-", "0", "yo'q", "yoq"):
+        try:
+            sl_price = float(text.replace(",", "."))
+        except ValueError:
+            await message.answer("⚠️ Raqam kiriting yoki o'tkazib yuboring:", reply_markup=skip_kb())
+            return
+
+    await state.update_data(sl_price=sl_price)
+    await state.set_state(TradeForm.tp)
+    await message.answer(
+        f"✅ SL: <b>{sl_price or 'yo\'q'}</b>\n\n"
+        f"Take Profit narxini kiriting (yo'q bo'lsa — kiritmang):",
+        reply_markup=skip_kb(),
+        parse_mode="HTML",
+    )
+
+
+@router.message(TradeForm.tp)
+async def trade_tp(message: Message, state: FSMContext, **kwargs) -> None:
+    """TP kiritildi."""
+    text = message.text.strip()
+    tp_price = None
+    if text and text.lower() not in ("-", "0", "yo'q", "yoq"):
+        try:
+            tp_price = float(text.replace(",", "."))
+        except ValueError:
+            await message.answer("⚠️ Raqam kiriting yoki o'tkazib yuboring:", reply_markup=skip_kb())
+            return
+
+    await state.update_data(tp_price=tp_price)
+    await state.set_state(TradeForm.result)
+    await message.answer(
+        f"✅ TP: <b>{tp_price or 'yo\'q'}</b>\n\n"
+        f"Savdo natijasini tanlang:",
+        reply_markup=trade_result_kb(),
+        parse_mode="HTML",
+    )
+
+
+@router.callback_query(F.data.in_({"result_tp", "result_sl", "result_manual"}))
+async def trade_result(callback: CallbackQuery, state: FSMContext, user_id: int, **kwargs) -> None:
+    """Natija tanlandi — savdoni saqlash."""
+    current_state = await state.get_state()
+    if current_state != TradeForm.result:
+        await callback.answer()
+        return
+
+    result_map = {"result_tp": "tp", "result_sl": "sl", "result_manual": "manual"}
+    result = result_map[callback.data]
 
     data = await state.get_data()
     await state.clear()
@@ -199,10 +267,11 @@ async def trade_pnl(message: Message, state: FSMContext, user_id: int, **kwargs)
     try:
         day_number = await _get_day_number(user_id)
         if not day_number:
-            await message.answer("⚠️ Kun raqami topilmadi.")
+            await callback.message.answer("⚠️ Kun raqami topilmadi.")
             return
 
         settings = await get_settings(user_id)
+        pnl = data["pnl"]
         trade = await add_trade(
             user_id=user_id,
             day_number=day_number,
@@ -213,18 +282,49 @@ async def trade_pnl(message: Message, state: FSMContext, user_id: int, **kwargs)
             quantity=data["quantity"],
             pnl=pnl,
             broker=settings.get("broker_name"),
+            sl_price=data.get("sl_price"),
+            tp_price=data.get("tp_price"),
+            result=result,
         )
 
-        sign = "+" if pnl >= 0 else ""
-        await message.answer(
+        result_icons = {"tp": "🟢 TP", "sl": "🔴 SL", "manual": "⚪ Manual"}
+        await callback.message.edit_text(
             f"✅ <b>Savdo saqlandi!</b>\n\n"
             f"📌 {data['symbol']} {data['direction']}\n"
-            f"📊 PnL: <b>{sign}{pnl:.2f}$</b>",
+            f"📊 PnL: <b>{pnl:+.2f}$</b>\n"
+            f"📍 Natija: {result_icons[result]}",
             parse_mode="HTML",
         )
     except Exception as e:
-        logger.error(f"trade_pnl saqlash xato [user_id={user_id}]: {e}")
-        await message.answer("⚠️ Saqlashda xato yuz berdi.")
+        logger.error(f"trade_result saqlash xato [user_id={user_id}]: {e}")
+        await callback.message.answer("⚠️ Saqlashda xato yuz berdi.")
+    finally:
+        await callback.answer()
+
+
+@router.callback_query(F.data == "skip_field")
+async def skip_field(callback: CallbackQuery, state: FSMContext, **kwargs) -> None:
+    """SL yoki TP o'tkazib yuborish."""
+    current_state = await state.get_state()
+
+    if current_state == TradeForm.sl:
+        await state.update_data(sl_price=None)
+        await state.set_state(TradeForm.tp)
+        await callback.message.edit_text(
+            "⏭ SL o'tkazib yuborildi.\n\nTake Profit narxini kiriting:",
+            reply_markup=skip_kb(),
+            parse_mode="HTML",
+        )
+    elif current_state == TradeForm.tp:
+        await state.update_data(tp_price=None)
+        await state.set_state(TradeForm.result)
+        await callback.message.edit_text(
+            "⏭ TP o'tkazib yuborildi.\n\nSavdo natijasini tanlang:",
+            reply_markup=trade_result_kb(),
+            parse_mode="HTML",
+        )
+
+    await callback.answer()
 
 
 @router.callback_query(F.data == "trade_cancel")
@@ -429,6 +529,9 @@ async def mt5_save_all(callback: CallbackQuery, state: FSMContext, user_id: int,
                     close_time=t.get("close_time"),
                     order_id=t.get("order_id"),
                     broker=settings.get("broker_name"),
+                    sl_price=t.get("sl_price"),
+                    tp_price=t.get("tp_price"),
+                    result=t.get("result"),
                 )
                 saved += 1
             except Exception as e:
