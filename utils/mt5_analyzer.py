@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 GEMINI_URL = (
     "https://generativelanguage.googleapis.com/v1beta/models/"
-    "gemini-1.5-flash:generateContent"
+    "gemini-2.5-flash-lite:generateContent"
 )
 
 # Gemini ga yuboriladigan prompt
