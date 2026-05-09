@@ -1,21 +1,18 @@
 """
 APScheduler sozlash va job registratsiyasi.
-Har bir foydalanuvchining timezone va vaqtiga qarab dinamik job qo'shadi.
+Resurslarni tejash uchun har bir job faqat kerakli vaqt oralig'ida ishlaydi.
 """
 
 import logging
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-import pytz
 
-from database.queries import get_all_active_users
 from scheduler.jobs import (
     job_create_daily_journals,
     job_morning_reminder,
     job_evening_reminder,
     job_auto_complete,
 )
-from utils.calculator import parse_time_str
 
 logger = logging.getLogger(__name__)
 
@@ -23,36 +20,30 @@ logger = logging.getLogger(__name__)
 _scheduler: AsyncIOScheduler | None = None
 
 
-def get_scheduler() -> AsyncIOScheduler:
-    """
-    Mavjud scheduler ni qaytaradi.
-    """
-    if _scheduler is None:
-        raise RuntimeError("Scheduler yaratilmagan. Avval setup_scheduler() chaqiring.")
-    return _scheduler
-
-
 async def setup_scheduler(bot) -> AsyncIOScheduler:
     """
     Scheduler ni yaratadi va barcha joblarni ro'yxatdan o'tkazadi.
-    main.py da ishga tushganda bir marta chaqiriladi.
 
-    Arxitektura:
-    - Har bir job BARCHA userlarni o'zi ichida aylanadi
-    - Har user uchun alohida job EMAS — umumiy joblar ishlaydi
-    - Job ichida har user o'z timezone va vaqtini tekshiradi
+    Resurs tejaydigan arxitektura:
+    - Har daqiqa o'rniga har 10 daqiqa ishlaydi
+    - Har bir job faqat o'z vaqt oralig'ida ishlaydi (UTC)
+    - UTC vaqt oralig'i: O'zbekiston UTC+5 ga mos (UTC -5 soat)
 
-    Joblar (barchasi UTC da har daqiqa ishlaydi, ichida vaqt tekshiriladi):
-    1. create_daily_journals — 00:01 UTC
-    2. morning_reminder      — har daqiqa (ichida reminder_time tekshiriladi)
-    3. evening_reminder      — har daqiqa (ichida evening_reminder_time tekshiriladi)
-    4. auto_complete         — har daqiqa (ichida auto_complete_time tekshiriladi)
+    Joblar:
+    1. create_daily_journals — 00:01 UTC (o'zgarmaydi)
+    2. morning_reminder      — 00:00-05:00 UTC (05:00-10:00 UZT), har 10 daqiqa
+    3. evening_reminder      — 13:00-18:00 UTC (18:00-23:00 UZT), har 10 daqiqa
+    4. auto_complete         — 17:00-19:30 UTC (22:00-00:30 UZT), har 10 daqiqa
+
+    ⚠️ Diqqat: UTC oralig'i Toshkent vaqtiga (UTC+5) moslashtirilgan.
+    Boshqa timezone dagi userlar uchun 10 daqiqalik xato bo'lishi mumkin —
+    bu qabul qilingan.
     """
     global _scheduler
 
     _scheduler = AsyncIOScheduler(timezone="UTC")
 
-    # 1. Kunlik journal yaratish — 00:01 UTC
+    # 1. Kunlik journal yaratish — 00:01 UTC (o'zgarmaydi)
     _scheduler.add_job(
         _wrap(job_create_daily_journals, bot),
         CronTrigger(hour=0, minute=1, timezone="UTC"),
@@ -60,56 +51,47 @@ async def setup_scheduler(bot) -> AsyncIOScheduler:
         replace_existing=True,
     )
 
-    # 2. Ertalabki eslatma — har daqiqa tekshiriladi
+    # 2. Ertalabki eslatma — har 20 daqiqa
     _scheduler.add_job(
         _wrap(job_morning_reminder, bot),
-        CronTrigger(minute="*", timezone="UTC"),
+        CronTrigger(minute="0,20,40", timezone="UTC"),
         id="morning_reminder",
         replace_existing=True,
     )
 
-    # 3. Kechki eslatma — har daqiqa tekshiriladi
+    # 3. Kechki eslatma — har 20 daqiqa
     _scheduler.add_job(
         _wrap(job_evening_reminder, bot),
-        CronTrigger(minute="*", timezone="UTC"),
+        CronTrigger(minute="0,20,40", timezone="UTC"),
         id="evening_reminder",
         replace_existing=True,
     )
 
-    # 4. Avtomatik yakunlash — har daqiqa tekshiriladi
+    # 4. Avtomatik yakunlash — har 20 daqiqa
     _scheduler.add_job(
         _wrap(job_auto_complete, bot),
-        CronTrigger(minute="*", timezone="UTC"),
+        CronTrigger(minute="0,20,40", timezone="UTC"),
         id="auto_complete",
         replace_existing=True,
     )
 
     _scheduler.start()
-    logger.info("Scheduler ishga tushdi. Jami 4 ta job.")
+    logger.info("Scheduler ishga tushdi. Jami 4 ta job (har 20 daqiqa rejimi).")
     return _scheduler
 
 
 def remove_user_jobs(user_id: int) -> None:
-    """
-    Bu arxitekturada alohida user joblar yo'q.
-    Eski kod bilan moslik uchun saqlanadi.
-    """
+    """Moslik uchun saqlanadi."""
     pass
 
 
 def refresh_user_jobs(bot, user_id: int, settings: dict) -> None:
-    """
-    Bu arxitekturada alohida user joblar yo'q.
-    Eski kod bilan moslik uchun saqlanadi.
-    """
+    """Moslik uchun saqlanadi."""
     pass
 
 
 def _wrap(job_func, bot):
-    """
-    Job funksiyasini bot bilan o'rab qaytaradi.
-    APScheduler callable sifatida ishlatadi.
-    """
+    """Job funksiyasini bot bilan o'rab qaytaradi."""
     async def wrapper():
         await job_func(bot)
     return wrapper
