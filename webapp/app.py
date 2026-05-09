@@ -364,3 +364,70 @@ async def get_chart_data(telegram_id: int):
     except Exception as e:
         logger.error(f"get_chart_data xato [telegram_id={telegram_id}]: {e}")
         raise HTTPException(status_code=500, detail="Server xatosi")
+
+
+@app.get("/api/progression")
+async def get_progression(telegram_id: int):
+    """
+    Barcha kunlar progression ma'lumotlarini qaytaradi.
+    Grafik uchun ishlatiladi.
+    """
+    user_id = await _get_user_id_from_telegram(telegram_id)
+    if not user_id:
+        raise HTTPException(status_code=404, detail="Foydalanuvchi topilmadi")
+
+    try:
+        settings = await get_settings(user_id)
+        if not settings or not settings.get("start_date"):
+            return JSONResponse({"progression": []})
+
+        start_bal  = float(settings.get("starting_balance") or 0)
+        rate       = float(settings.get("daily_profit_rate") or 0.1)
+        extra      = float(settings.get("extra_target") or 0)
+        total_days = int(settings.get("total_days") or 0)
+        rest_days  = settings.get("rest_days") or ""
+        start_date = parse_start_date(settings["start_date"])
+
+        if not start_date or not total_days:
+            return JSONResponse({"progression": []})
+
+        # Tüm journal yozuvlarini olish
+        journals = await get_journal_range(user_id, start_date, start_date.replace(year=start_date.year + 1))
+        journal_map = {j["day_number"]: j for j in journals}
+
+        # Har bir ish kuni uchun progression yaratish
+        from datetime import timedelta
+        from utils.calculator import is_rest_day as _is_rest_day
+
+        progression = []
+        current   = start_date
+        day_count = 0
+
+        while day_count < total_days:
+            if not _is_rest_day(current, rest_days):
+                day_count += 1
+                j = journal_map.get(day_count)
+
+                final_balance = round(calc_planned_balance(start_bal, rate, day_count, extra), 2)
+
+                progression.append({
+                    "day":          day_count,
+                    "date":         current.strftime("%Y-%m-%d"),
+                    "start_balance": float(j["start_balance"]) if j else round(calc_planned_balance(start_bal, rate, day_count - 1, extra), 2),
+                    "final_balance": final_balance,
+                    "actual_pnl":   float(j["net_pnl"]) if j and j["is_completed"] else None,
+                    "is_completed": bool(j["is_completed"]) if j else False,
+                    "is_rolled_over": bool(j["is_rolled_over"]) if j and j["is_completed"] else False,
+                    "target_profit": float(j["target_profit"]) if j else round(start_bal * rate * (1 + rate) ** (day_count - 1), 2),
+                    "extra_target":  float(j["extra_target"]) if j else extra,
+                    "carry_over":    float(j["carry_over_amount"]) if j else 0,
+                })
+
+            current += timedelta(days=1)
+            if (current - start_date).days > total_days * 3:
+                break
+
+        return JSONResponse({"progression": progression})
+    except Exception as e:
+        logger.error(f"get_progression xato [telegram_id={telegram_id}]: {e}")
+        raise HTTPException(status_code=500, detail="Server xatosi")

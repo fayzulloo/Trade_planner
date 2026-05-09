@@ -29,34 +29,6 @@ function fmtPrice(val) {
   return Number(val).toLocaleString('en-US', { minimumFractionDigits: 3, maximumFractionDigits: 5 });
 }
 
-function generateDateRange(startDate, endDate) {
-  const dates = [];
-
-  const current = new Date(startDate);
-  const end = new Date(endDate);
-
-  while (current <= end) {
-    dates.push(current.toISOString().split('T')[0]);
-    current.setDate(current.getDate() + 1);
-  }
-
-  return dates;
-}
-
-function isWeekend(dateStr) {
-  const day = new Date(dateStr).getDay();
-  return day === 0 || day === 6;
-}
-
-function formatChartDate(dateStr) {
-  const d = new Date(dateStr);
-
-  return d.toLocaleDateString('en-GB', {
-    day: '2-digit',
-    month: '2-digit'
-  });
-}
-
 function setEl(id, text) {
   const el = document.getElementById(id);
   if (el) el.textContent = text ?? '—';
@@ -370,130 +342,77 @@ document.getElementById('back-btn')?.addEventListener('click', () => {
 let balChart = null, pnlChart = null;
 
 async function loadCharts() {
-  const data = await apiFetch('/api/chart_data');
+  document.getElementById('chart-balance-wrap').innerHTML = '<div class="loading-state"><div class="spinner"></div></div>';
+  document.getElementById('chart-pnl-wrap').innerHTML     = '<div class="loading-state"><div class="spinner"></div></div>';
 
-  if (!data?.planned_dates?.length) {
+  const data = await apiFetch('/api/progression');
+  if (!data?.progression?.length) {
     document.getElementById('chart-balance-wrap').innerHTML = '<div class="empty-state">Ma\'lumot yetarli emas</div>';
-    document.getElementById('chart-pnl-wrap').innerHTML = '';
+    document.getElementById('chart-pnl-wrap').innerHTML     = '';
     return;
   }
 
-  const {
-    actual_dates = [],
-    actual       = [],
-    planned_dates = [],
-    planned      = [],
-    pnl          = [],
-  } = data;
-
+  const progression = data.progression;
   const grid = 'rgba(255,255,255,0.06)';
   const hint = '#5a6478';
 
-  // ─────────────────────────────────────────
-  // Strategiya boshlanish va tugash sanasi
-  // ─────────────────────────────────────────
-
-  const strategyStart = planned_dates[0];
-  const strategyEnd   = planned_dates[planned_dates.length - 1];
-
-  // Barcha kunlar
-  const allDates = generateDateRange(strategyStart, strategyEnd);
-
-  // Weekendlarni olib tashlash
-  const filteredDates = allDates.filter(d => !isWeekend(d));
-
-  // ─────────────────────────────────────────
-  // Mapping
-  // ─────────────────────────────────────────
-
-  const actualMap = {};
-  const pnlMap    = {};
-
-  actual_dates.forEach((d, i) => {
-    actualMap[d] = actual[i];
-    pnlMap[d]    = pnl[i];
-  });
-
-  const plannedMap = {};
-
-  planned_dates.forEach((d, i) => {
-    plannedMap[d] = planned[i];
-  });
-
-  // ─────────────────────────────────────────
-  // Datasetlar
-  // ─────────────────────────────────────────
-
-  const actualData = filteredDates.map(d => actualMap[d] ?? null);
-  const plannedData = filteredDates.map(d => plannedMap[d] ?? null);
-
-  // Future kunlar fade effect
-  const today = new Date().toISOString().split('T')[0];
-
-  const pointRadius = filteredDates.map(d => d === today ? 5 : 3);
-
-  const pointBorderWidth = filteredDates.map(d => d === today ? 3 : 1);
-
-  const pointBackgroundColor = filteredDates.map(d => {
-    if (d === today) return '#ffffff';
-    return '#00e096';
-  });
-
-  // Current day vertical line plugin
-  const todayLinePlugin = {
-    id: 'todayLine',
-
-    afterDraw(chart) {
-      const { ctx, chartArea, scales } = chart;
-
-      const index = filteredDates.indexOf(today);
-      if (index === -1) return;
-
-      const x = scales.x.getPixelForValue(index);
-
-      ctx.save();
-      ctx.beginPath();
-      ctx.setLineDash([5, 5]);
-      ctx.strokeStyle = 'rgba(255,255,255,0.25)';
-      ctx.moveTo(x, chartArea.top);
-      ctx.lineTo(x, chartArea.bottom);
-      ctx.stroke();
-      ctx.restore();
-    }
+  const chartOpts = {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: { mode: 'index', intersect: false },
+    plugins: {
+      legend: { labels: { color: '#8892a4', font: { size: 11 }, boxWidth: 12, padding: 16 } },
+      tooltip: {
+        backgroundColor: '#1a1e2a',
+        borderColor: 'rgba(255,255,255,0.1)',
+        borderWidth: 1,
+        titleColor: '#e8eaf0',
+        bodyColor: '#8892a4',
+        callbacks: {
+          label: ctx => {
+            if (ctx.raw == null) return null;
+            const v = Number(ctx.raw);
+            return ` ${ctx.dataset.label}: ${v >= 0 ? '+' : ''}$${v.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
+          },
+        },
+      },
+    },
+    scales: {
+      x: {
+        ticks: { color: hint, font: { size: 10, family: "'JetBrains Mono'" }, maxRotation: 45, maxTicksLimit: 10 },
+        grid: { color: grid, drawBorder: false },
+      },
+      y: {
+        ticks: {
+          color: hint,
+          font: { size: 10, family: "'JetBrains Mono'" },
+          callback: v => `$${Number(v).toLocaleString()}`,
+        },
+        grid: { color: grid, drawBorder: false },
+      },
+    },
   };
 
-  // ─────────────────────────────────────────
-  // BALANCE CHART
-  // ─────────────────────────────────────────
+  // ── Balans grafigi ──
+  // Rejalangan — barcha kunlar (to'liq strategiya davri)
+  const plannedLabels  = progression.map(d => d.date.slice(5));
+  const plannedData    = progression.map(d => d.final_balance);
+
+  // Haqiqiy — faqat yakunlangan kunlar, qolganlar null
+  const actualData = progression.map(d => {
+    if (!d.is_completed || d.actual_pnl == null) return null;
+    return d.start_balance + d.actual_pnl;
+  });
 
   document.getElementById('chart-balance-wrap').innerHTML = '<canvas id="balance-chart" height="220"></canvas>';
-
   const balCtx = document.getElementById('balance-chart')?.getContext('2d');
-
   if (balCtx) {
     if (balChart) balChart.destroy();
-
     balChart = new Chart(balCtx, {
       type: 'line',
-
       data: {
-        labels: filteredDates.map(formatChartDate),
-
+        labels: plannedLabels,
         datasets: [
-          {
-            label: 'Haqiqiy',
-            data: actualData,
-            borderColor: '#00e096',
-            backgroundColor: 'rgba(0,224,150,0.08)',
-            borderWidth: 2,
-            pointRadius,
-            pointBorderWidth,
-            pointBackgroundColor,
-            pointBorderColor: '#00e096',
-            fill: true,
-            tension: 0.3,
-            spanGaps: false,
-          },
           {
             label: 'Rejalangan',
             data: plannedData,
@@ -505,185 +424,49 @@ async function loadCharts() {
             tension: 0.3,
             spanGaps: true,
           },
+          {
+            label: 'Haqiqiy',
+            data: actualData,
+            borderColor: '#00e096',
+            backgroundColor: 'rgba(0,224,150,0.08)',
+            borderWidth: 2,
+            pointRadius: 3,
+            pointBackgroundColor: '#00e096',
+            fill: true,
+            tension: 0.3,
+            spanGaps: false,
+          },
         ],
       },
-
-      options: {
-        responsive: true,
-
-        plugins: {
-          legend: {
-            labels: {
-              color: '#8892a4',
-              font: { size: 11 },
-              boxWidth: 12,
-              padding: 16,
-            },
-          },
-
-          tooltip: {
-            backgroundColor: '#1a1e2a',
-            borderColor: 'rgba(255,255,255,0.1)',
-            borderWidth: 1,
-            titleColor: '#e8eaf0',
-            bodyColor: '#8892a4',
-
-            callbacks: {
-              label: ctx => {
-                if (ctx.raw == null) return null;
-
-                return ` ${ctx.dataset.label}: $${Number(ctx.raw).toLocaleString('en-US', {
-                  minimumFractionDigits: 2
-                })}`;
-              },
-            },
-          },
-        },
-
-        scales: {
-          x: {
-            ticks: {
-              color: hint,
-              font: {
-                size: 10,
-                family: "'JetBrains Mono'"
-              },
-              maxRotation: 45,
-              maxTicksLimit: 15,
-            },
-
-            grid: {
-              color: grid,
-              drawBorder: false,
-            },
-          },
-
-          y: {
-            ticks: {
-              color: hint,
-
-              font: {
-                size: 10,
-                family: "'JetBrains Mono'"
-              },
-
-              callback: v => `$${Number(v).toLocaleString()}`,
-            },
-
-            grid: {
-              color: grid,
-              drawBorder: false,
-            },
-          },
-        },
-
-        interaction: {
-          mode: 'index',
-          intersect: false,
-        },
-      },
-
-      plugins: [todayLinePlugin]
+      options: { ...chartOpts, maintainAspectRatio: false },
     });
   }
 
-  // ─────────────────────────────────────────
-  // PNL CHART
-  // ─────────────────────────────────────────
+  // ── PnL grafigi ──
+  const completed   = progression.filter(d => d.is_completed && d.actual_pnl != null);
+  const pnlLabels   = completed.map(d => d.date.slice(5));
+  const pnlData     = completed.map(d => d.actual_pnl);
+  const pnlColors   = pnlData.map(v => v >= 0 ? 'rgba(0,224,150,0.65)' : 'rgba(255,77,106,0.65)');
+  const pnlBorders  = pnlData.map(v => v >= 0 ? '#00e096' : '#ff4d6a');
 
   document.getElementById('chart-pnl-wrap').innerHTML = '<canvas id="pnl-chart" height="180"></canvas>';
-
   const pnlCtx = document.getElementById('pnl-chart')?.getContext('2d');
-
   if (pnlCtx) {
     if (pnlChart) pnlChart.destroy();
-
     pnlChart = new Chart(pnlCtx, {
       type: 'bar',
-
       data: {
-        labels: actual_dates.map(formatChartDate),
-
+        labels: pnlLabels,
         datasets: [{
           label: 'Kunlik PnL',
-          data: pnl,
-
-          backgroundColor: pnl.map(v =>
-            v >= 0
-              ? 'rgba(0,224,150,0.65)'
-              : 'rgba(255,77,106,0.65)'
-          ),
-
-          borderColor: pnl.map(v =>
-            v >= 0
-              ? '#00e096'
-              : '#ff4d6a'
-          ),
-
+          data: pnlData,
+          backgroundColor: pnlColors,
+          borderColor: pnlBorders,
           borderWidth: 1,
           borderRadius: 4,
         }],
       },
-
-      options: {
-        responsive: true,
-
-        plugins: {
-          legend: {
-            display: false
-          },
-
-          tooltip: {
-            backgroundColor: '#1a1e2a',
-            borderColor: 'rgba(255,255,255,0.1)',
-            borderWidth: 1,
-            titleColor: '#e8eaf0',
-            bodyColor: '#8892a4',
-
-            callbacks: {
-              label: ctx => ` PnL: ${ctx.raw >= 0 ? '+' : ''}$${Number(ctx.raw).toLocaleString('en-US', {
-                minimumFractionDigits: 2
-              })}`,
-            },
-          },
-        },
-
-        scales: {
-          x: {
-            ticks: {
-              color: hint,
-              font: {
-                size: 10,
-                family: "'JetBrains Mono'"
-              },
-              maxRotation: 45,
-            },
-
-            grid: {
-              color: grid,
-              drawBorder: false,
-            },
-          },
-
-          y: {
-            ticks: {
-              color: hint,
-
-              font: {
-                size: 10,
-                family: "'JetBrains Mono'"
-              },
-
-              callback: v => `$${Number(v).toLocaleString()}`,
-            },
-
-            grid: {
-              color: grid,
-              drawBorder: false,
-            },
-          },
-        },
-      },
+      options: { ...chartOpts, plugins: { ...chartOpts.plugins, legend: { display: false } } },
     });
   }
 }
