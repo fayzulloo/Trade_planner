@@ -28,6 +28,11 @@ def _require(key: str) -> str:
 # Telegram bot token (@BotFather dan olinadi)
 BOT_TOKEN: str = _require("BOT_TOKEN")
 
+# Webhook URL — Trade_planner service Railway URL
+# Format: https://trade-planner-production-xxxx.up.railway.app
+# ⚠️ Polling ishlatish uchun bo'sh qoldiring
+BOT_WEBHOOK_URL: str = os.getenv("BOT_WEBHOOK_URL", "")
+
 # WebApp URL (Railway webapp service URL)
 # Agar yo'q bo'lsa — WebApp tugmasi ko'rsatilmaydi
 WEBAPP_URL: str = os.getenv("WEBAPP_URL", "")
