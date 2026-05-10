@@ -123,6 +123,8 @@ def _format_plan_message(journal: dict, settings: dict, day_number: int) -> str:
         float(settings.get("daily_profit_rate") or 0.1),
         day_number,
         float(settings.get("extra_target") or 0),
+        float(settings.get("withdrawal_amount") or 0),
+        int(settings.get("withdrawal_every") or 0),
     )
 
     pnl_icon = "🟢" if current_pnl >= 0 else "🔴"

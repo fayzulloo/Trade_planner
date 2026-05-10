@@ -260,16 +260,19 @@ async def _send_chart(callback: CallbackQuery, user_id: int, date_from: date, da
     targets = []
     planned_balances = []
 
-    start_bal = float(settings["starting_balance"] or 0)
-    rate = float(settings["daily_profit_rate"] or 0.1)
-    extra = float(settings["extra_target"] or 0)
+    start_bal        = float(settings["starting_balance"] or 0)
+    rate             = float(settings["daily_profit_rate"] or 0.1)
+    extra            = float(settings.get("extra_target") or 0)
+    withdrawal_amt   = float(settings.get("withdrawal_amount") or 0)
+    withdrawal_every = int(settings.get("withdrawal_every") or 0)
 
     for j in journals:
         actual_balances.append(float(j["end_balance"] or j["start_balance"]))
         pnl_values.append(float(j["net_pnl"] or 0))
         targets.append(float(j["target_profit"]) + float(j["extra_target"]) + float(j["carry_over_amount"]))
-        # ⚠️ day_number ishlatiladi — strategiya boshidan to'g'ri hisob
-        planned_balances.append(calc_planned_balance(start_bal, rate, j["day_number"], extra))
+        planned_balances.append(calc_planned_balance(
+            start_bal, rate, j["day_number"], extra, withdrawal_amt, withdrawal_every
+        ))
 
     img_bytes = create_balance_chart(dates, actual_balances, planned_balances, title)
     if not img_bytes:

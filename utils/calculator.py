@@ -224,17 +224,39 @@ def calc_planned_balance(
     daily_rate: float,
     day_number: int,
     extra_target: float = 0,
+    withdrawal_amount: float = 0,
+    withdrawal_every: int = 0,
 ) -> float:
     """
-    N-kun oxiridagi rejalangan balansni hisoblaydi (murakkab foiz).
-    Yechish va carry_over hisobga olinmaydi (sof rejalashtirish).
+    N-kun oxiridagi rejalangan balansni hisoblaydi.
 
-    Misol: 10000$ * (1.10)^5 = 16105.10$
+    Formula (har kun uchun):
+        profit          = balance * daily_rate
+        ending_balance  = balance + profit + extra_target
+        yechish kuni:   balance = ending_balance - withdrawal_amount
+        oddiy kun:      balance = ending_balance
+
+    Parametrlar:
+        starting_balance  — boshlang'ich balans
+        daily_rate        — kunlik foiz (0.10 = 10%)
+        day_number        — necha kunlik hisob
+        extra_target      — qo'shimcha kunlik maqsad ($)
+        withdrawal_amount — yechish summasi ($)
+        withdrawal_every  — har necha kunda yechish (0 = yechish yo'q)
     """
     try:
-        planned = starting_balance * ((1 + daily_rate) ** day_number)
-        planned += extra_target * day_number
-        return round(planned, 2)
+        balance = starting_balance
+        for day in range(1, day_number + 1):
+            profit = balance * daily_rate
+            ending_balance = balance + profit + extra_target
+
+            # Yechish kuni
+            if withdrawal_every > 0 and withdrawal_amount > 0 and day % withdrawal_every == 0:
+                balance = ending_balance - withdrawal_amount
+            else:
+                balance = ending_balance
+
+        return round(balance, 2)
     except Exception as e:
         logger.error(f"calc_planned_balance xato: {e}")
         return starting_balance
