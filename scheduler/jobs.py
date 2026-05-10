@@ -145,11 +145,7 @@ async def job_morning_reminder(bot) -> None:
                 continue
 
             now = get_current_datetime(timezone)
-
-            # 10 daqiqalik tolerans: user vaqti job vaqtiga +/-10 daqiqa ichida bo'lsa yuborish
-            user_minutes = parsed[0] * 60 + parsed[1]
-            now_minutes  = now.hour * 60 + now.minute
-            if abs(now_minutes - user_minutes) > 20:
+            if not (now.hour == parsed[0] and now.minute == parsed[1]):
                 continue
 
             today = now.date()
@@ -235,9 +231,7 @@ async def job_evening_reminder(bot) -> None:
             timezone = settings.get("timezone", "Asia/Tashkent")
             now = get_current_datetime(timezone)
 
-            evening_user_min = parsed[0] * 60 + parsed[1]
-            evening_now_min  = now.hour * 60 + now.minute
-            if abs(evening_now_min - evening_user_min) > 20:
+            if not (now.hour == parsed[0] and now.minute == parsed[1]):
                 continue
 
             today = now.date()
@@ -298,9 +292,7 @@ async def job_auto_complete(bot) -> None:
             timezone = settings.get("timezone", "Asia/Tashkent")
             now = get_current_datetime(timezone)
 
-            auto_user_min = parsed[0] * 60 + parsed[1]
-            auto_now_min  = now.hour * 60 + now.minute
-            if abs(auto_now_min - auto_user_min) > 20:
+            if not (now.hour == parsed[0] and now.minute == parsed[1]):
                 continue
 
             today = now.date()

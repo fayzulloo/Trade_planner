@@ -51,32 +51,32 @@ async def setup_scheduler(bot) -> AsyncIOScheduler:
         replace_existing=True,
     )
 
-    # 2. Ertalabki eslatma — har 20 daqiqa
+    # 2. Ertalabki eslatma — har daqiqa tekshiriladi
     _scheduler.add_job(
         _wrap(job_morning_reminder, bot),
-        CronTrigger(minute="0,20,40", timezone="UTC"),
+        CronTrigger(minute="*", timezone="UTC"),
         id="morning_reminder",
         replace_existing=True,
     )
 
-    # 3. Kechki eslatma — har 20 daqiqa
+    # 3. Kechki eslatma — har daqiqa tekshiriladi
     _scheduler.add_job(
         _wrap(job_evening_reminder, bot),
-        CronTrigger(minute="0,20,40", timezone="UTC"),
+        CronTrigger(minute="*", timezone="UTC"),
         id="evening_reminder",
         replace_existing=True,
     )
 
-    # 4. Avtomatik yakunlash — har 20 daqiqa
+    # 4. Avtomatik yakunlash — har daqiqa tekshiriladi
     _scheduler.add_job(
         _wrap(job_auto_complete, bot),
-        CronTrigger(minute="0,20,40", timezone="UTC"),
+        CronTrigger(minute="*", timezone="UTC"),
         id="auto_complete",
         replace_existing=True,
     )
 
     _scheduler.start()
-    logger.info("Scheduler ishga tushdi. Jami 4 ta job (har 20 daqiqa rejimi).")
+    logger.info("Scheduler ishga tushdi. Jami 4 ta job.")
     return _scheduler
 
 
