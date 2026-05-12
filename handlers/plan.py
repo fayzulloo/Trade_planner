@@ -83,12 +83,20 @@ async def _get_or_create_today_journal(user_id: int, settings: dict):
             if last["end_balance"]:
                 start_balance = float(last["end_balance"])
 
-        target_profit = calc_target_profit(
-            start_balance,
-            float(settings.get("daily_profit_rate") or 0.1),
+        # target_profit — rejalangan balansdan hisoblanadi
+        _starting = float(settings.get("starting_balance") or 0)
+        _rate     = float(settings.get("daily_profit_rate") or 0.1)
+        _extra    = float(settings.get("extra_target") or 0)
+        _wamt     = float(settings.get("withdrawal_amount") or 0)
+        _wevery   = int(settings.get("withdrawal_every") or 0)
+
+        planned_start = calc_planned_balance(
+            _starting, _rate, day_number - 1, _extra, _wamt, _wevery
         )
-        withdrawal_every = settings.get("withdrawal_every") or 7
-        _is_withdrawal_day = is_withdrawal_day(day_number, withdrawal_every)
+        target_profit = calc_target_profit(planned_start, _rate)
+
+        withdrawal_every   = _wevery
+        _is_withdrawal_day = is_withdrawal_day(day_number, _wevery) if _wevery > 0 else False
 
         journal = await create_journal_day(
             user_id=user_id,
@@ -118,13 +126,14 @@ def _format_plan_message(journal: dict, settings: dict, day_number: int) -> str:
     progress = calc_progress_percent(current_pnl, total_target)
 
     # Rejalangan balans
+    _withdrawal_every = int(settings.get("withdrawal_every") or 0)
     planned = calc_planned_balance(
         float(settings.get("starting_balance") or 0),
         float(settings.get("daily_profit_rate") or 0.1),
         day_number,
         float(settings.get("extra_target") or 0),
-        float(settings.get("withdrawal_amount") or 0),
-        int(settings.get("withdrawal_every") or 0),
+        float(settings.get("withdrawal_amount") or 0) if _withdrawal_every > 0 else 0,
+        _withdrawal_every,
     )
 
     pnl_icon = "🟢" if current_pnl >= 0 else "🔴"

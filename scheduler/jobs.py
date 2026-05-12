@@ -83,7 +83,7 @@ async def job_create_daily_journals(bot) -> None:
             if existing:
                 continue
 
-            # Oldingi kun balansi
+            # Oldingi kun balansi va yakunlanmagan kunni tekshirish
             start_balance = float(settings.get("starting_balance") or 0)
             prev_journals = await get_journal_range(
                 user_id,
@@ -92,16 +92,32 @@ async def job_create_daily_journals(bot) -> None:
             )
             if prev_journals:
                 last = prev_journals[-1]
-                if last["end_balance"]:
+                # ⚠️ Oldingi kun yakunlanmagan bo'lsa — avval yakunlaymiz
+                if not last["is_completed"]:
+                    await complete_day(user_id, last["day_number"])
+                    logger.info(f"Oldingi kun avtomatik yakunlandi [user_id={user_id}, day={last['day_number']}]")
+                    # Yangilangan journal ni qayta olamiz
+                    last = await get_today_journal(user_id, last["date"])
+
+                if last and last["end_balance"]:
                     start_balance = float(last["end_balance"])
 
-            target_profit = calc_target_profit(
-                start_balance,
-                float(settings.get("daily_profit_rate") or 0.1),
-            )
+            # target_profit — rejalangan balansdan hisoblanadi (haqiqiy balansdan emas)
+            # Misol: 2-kun rejalangan start = calc_planned_balance(5000, 0.1, 1) = 5500
+            #        target_profit = 5500 * 10% = 550$
+            _starting   = float(settings.get("starting_balance") or 0)
+            _rate        = float(settings.get("daily_profit_rate") or 0.1)
+            _extra       = float(settings.get("extra_target") or 0)
+            _wamt        = float(settings.get("withdrawal_amount") or 0)
+            _wevery      = int(settings.get("withdrawal_every") or 0)
 
-            withdrawal_every = settings.get("withdrawal_every") or 7
-            _is_wd = is_withdrawal_day(day_number, withdrawal_every)
+            planned_start = calc_planned_balance(
+                _starting, _rate, day_number - 1, _extra, _wamt, _wevery
+            )
+            target_profit = calc_target_profit(planned_start, _rate)
+
+            withdrawal_every = _wevery
+            _is_wd = is_withdrawal_day(day_number, withdrawal_every) if _wevery > 0 else False
 
             await create_journal_day(
                 user_id=user_id,
