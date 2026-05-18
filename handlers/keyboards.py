@@ -57,10 +57,16 @@ def plan_kb(
 
     # Yechish kuni — tasdiqlanmagan
     if is_withdrawal_day and not withdrawal_confirmed:
-        builder.row(InlineKeyboardButton(
-            text="💸 Yechishni tasdiqlash",
-            callback_data="confirm_withdrawal",
-        ))
+        builder.row(
+            InlineKeyboardButton(
+                text="✅ Yechib yakunlash",
+                callback_data="confirm_withdrawal",
+            ),
+            InlineKeyboardButton(
+                text="❌ Yechimsiz yakunlash",
+                callback_data="reject_withdrawal",
+            ),
+        )
     else:
         builder.row(InlineKeyboardButton(
             text="✅ Kunni yakunlash",

@@ -302,7 +302,8 @@ async def refresh_plan(callback: CallbackQuery, user_id: int, **kwargs) -> None:
 @router.callback_query(F.data == "confirm_withdrawal")
 async def confirm_withdrawal(callback: CallbackQuery, user_id: int, **kwargs) -> None:
     """
-    Yechishni tasdiqlash.
+    Yechishni tasdiqlash + kunni yakunlash.
+    withdrawal_confirmed = TRUE, keyin complete_day chaqiriladi.
     """
     try:
         settings = await get_settings(user_id)
@@ -313,6 +314,7 @@ async def confirm_withdrawal(callback: CallbackQuery, user_id: int, **kwargs) ->
             await callback.answer("Bugungi jurnal topilmadi.", show_alert=True)
             return
 
+        # 1. Yechishni tasdiqlash
         from database.connection import get_pool
         pool = await get_pool()
         async with pool.acquire() as conn:
@@ -322,23 +324,90 @@ async def confirm_withdrawal(callback: CallbackQuery, user_id: int, **kwargs) ->
                 WHERE user_id = $1 AND date = $2;
             """, user_id, today)
 
-        await callback.answer("✅ Yechish tasdiqlandi!", show_alert=False)
+        # 2. Kunni yakunlash (withdrawal_confirmed=TRUE bo'lgani uchun ayiriladi)
+        updated = await complete_day(user_id, journal["day_number"])
+        if not updated:
+            await callback.answer("⚠️ Yakunlashda xato.", show_alert=True)
+            return
 
-        # Rejani yangilash
-        journal, day_number = await _get_or_create_today_journal(user_id, settings)
-        text = _format_plan_message(journal, settings, day_number)
+        net_pnl     = float(updated["net_pnl"] or 0)
+        end_balance = float(updated["end_balance"] or 0)
+        withdrawal  = float(updated["withdrawal_amount"] or 0)
+        icon = "🟢" if not updated["is_rolled_over"] else "🔴"
+
+        rollover_text = ""
+        if updated["is_rolled_over"]:
+            total_target = calc_total_target(
+                float(updated["target_profit"]),
+                float(updated["extra_target"]),
+                float(updated["carry_over_amount"]),
+            )
+            missing = calc_remaining(total_target, net_pnl)
+            rollover_text = f"\n⚠️ {format_money(missing)} keyingi kunga o'tadi."
+
         await callback.message.edit_text(
-            text,
-            reply_markup=plan_kb(
-                is_withdrawal_day=True,
-                withdrawal_confirmed=True,
-                webapp_url=WEBAPP_URL,
-            ),
+            f"{icon} <b>Kun yakunlandi!</b>\n\n"
+            f"💰 Net PnL: <b>{format_money(net_pnl)}</b>\n"
+            f"💸 Yechildi: <b>{format_money(withdrawal)}</b>\n"
+            f"🏦 Yangi balans: <b>{format_money(end_balance)}</b>"
+            f"{rollover_text}",
             parse_mode="HTML",
         )
     except Exception as e:
         logger.error(f"confirm_withdrawal xato [user_id={user_id}]: {e}")
         await callback.answer("⚠️ Xato yuz berdi.", show_alert=True)
+    finally:
+        await callback.answer()
+
+
+@router.callback_query(F.data == "reject_withdrawal")
+async def reject_withdrawal(callback: CallbackQuery, user_id: int, **kwargs) -> None:
+    """
+    Yechishni rad etish + kunni yechimsiz yakunlash.
+    withdrawal_confirmed = FALSE qoladi, complete_day chaqiriladi.
+    """
+    try:
+        settings = await get_settings(user_id)
+        today = get_current_date(settings["timezone"])
+        journal = await get_today_journal(user_id, today)
+
+        if not journal:
+            await callback.answer("Bugungi jurnal topilmadi.", show_alert=True)
+            return
+
+        # Kunni yechimsiz yakunlash (withdrawal_confirmed=FALSE)
+        updated = await complete_day(user_id, journal["day_number"])
+        if not updated:
+            await callback.answer("⚠️ Yakunlashda xato.", show_alert=True)
+            return
+
+        net_pnl     = float(updated["net_pnl"] or 0)
+        end_balance = float(updated["end_balance"] or 0)
+        icon = "🟢" if not updated["is_rolled_over"] else "🔴"
+
+        rollover_text = ""
+        if updated["is_rolled_over"]:
+            total_target = calc_total_target(
+                float(updated["target_profit"]),
+                float(updated["extra_target"]),
+                float(updated["carry_over_amount"]),
+            )
+            missing = calc_remaining(total_target, net_pnl)
+            rollover_text = f"\n⚠️ {format_money(missing)} keyingi kunga o'tadi."
+
+        await callback.message.edit_text(
+            f"{icon} <b>Kun yakunlandi!</b>\n\n"
+            f"💰 Net PnL: <b>{format_money(net_pnl)}</b>\n"
+            f"💸 Yechish: bekor qilindi\n"
+            f"🏦 Yangi balans: <b>{format_money(end_balance)}</b>"
+            f"{rollover_text}",
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logger.error(f"reject_withdrawal xato [user_id={user_id}]: {e}")
+        await callback.answer("⚠️ Xato yuz berdi.", show_alert=True)
+    finally:
+        await callback.answer()
 
 
 @router.callback_query(F.data == "complete_day")
