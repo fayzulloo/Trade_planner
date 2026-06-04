@@ -302,90 +302,55 @@ async def get_chart_data(telegram_id: int):
 
     try:
         settings = await get_settings(user_id)
-        if not settings or not settings.get("start_date"):
-            return JSONResponse({"dates": [], "actual": [], "planned": [], "pnl": []})
+        if not settings:
+            return JSONResponse({"actual_dates": [], "actual": [], "pnl": [], "planned_dates": [], "planned": []})
 
-        start_date = parse_start_date(settings["start_date"])
-        today = get_current_date(settings["timezone"])
-        journals = await get_journal_range(user_id, start_date, today)
-
-        if not journals:
-            # Journal yo'q bo'lsa ham rejalangan chiziqni ko'rsatamiz
-            planned_dates    = [start_date.strftime("%d.%m")]
-            planned_balances = [start_bal]
-
-            from datetime import timedelta
-            from utils.calculator import is_rest_day as _is_rest_day
-
-            current   = start_date
-            day_count = 0
-            while day_count < total_days:
-                if not _is_rest_day(current, rest_days):
-                    day_count += 1
-                    planned_dates.append(current.strftime("%d.%m"))
-                    planned_balances.append(round(calc_planned_balance(start_bal, rate, day_count, extra), 2))
-                current += timedelta(days=1)
-                if (current - start_date).days > total_days * 3:
-                    break
-
-            return JSONResponse({
-                "actual_dates":  [],
-                "actual":        [],
-                "pnl":           [],
-                "planned_dates": planned_dates,
-                "planned":       planned_balances,
-            })
-
+        mode             = settings.get("mode", "strategy")
         start_bal        = float(settings.get("starting_balance") or 0)
-        rate             = float(settings.get("daily_profit_rate") or 0.1)
+        rate             = float(settings.get("daily_profit_rate") or 0)
         extra            = float(settings.get("extra_target") or 0)
         total_days       = int(settings.get("total_days") or 0)
         rest_days        = settings.get("rest_days") or ""
         withdrawal_amt   = float(settings.get("withdrawal_amount") or 0)
         withdrawal_every = int(settings.get("withdrawal_every") or 0)
+        today            = get_current_date(settings.get("timezone", "Asia/Tashkent"))
 
-        if not journals:
-            planned_dates    = [start_date.strftime("%d.%m")]
-            planned_balances = [start_bal]
+        # Journal rejimida start_date yo'q — faqat haqiqiy balans chiziq
+        if mode == "journal":
+            pool = await get_pool()
+            async with pool.acquire() as conn:
+                journals = await conn.fetch("""
+                    SELECT date, end_balance, start_balance, net_pnl
+                    FROM daily_journal
+                    WHERE user_id = $1 AND is_completed = TRUE
+                    ORDER BY date ASC;
+                """, user_id)
 
-            from datetime import timedelta
-            from utils.calculator import is_rest_day as _is_rest_day
-
-            current   = start_date
-            day_count = 0
-            while day_count < total_days:
-                if not _is_rest_day(current, rest_days):
-                    day_count += 1
-                    planned_dates.append(current.strftime("%d.%m"))
-                    planned_balances.append(round(calc_planned_balance(
-                        start_bal, rate, day_count, extra, withdrawal_amt, withdrawal_every
-                    ), 2))
-                current += timedelta(days=1)
-                if (current - start_date).days > total_days * 3:
-                    break
+            actual_dates    = [j["date"].strftime("%d.%m") for j in journals]
+            actual_balances = [round(float(j["end_balance"] or j["start_balance"] or 0), 2) for j in journals]
+            pnl_values      = [round(float(j["net_pnl"] or 0), 2) for j in journals]
 
             return JSONResponse({
-                "actual_dates":  [],
-                "actual":        [],
-                "pnl":           [],
-                "planned_dates": planned_dates,
-                "planned":       planned_balances,
+                "actual_dates":  actual_dates,
+                "actual":        actual_balances,
+                "pnl":           pnl_values,
+                "planned_dates": [],
+                "planned":       [],
             })
 
-        actual_dates    = []
-        actual_balances = []
-        pnl_values      = []
-        for j in journals:
-            actual_dates.append(j["date"].strftime("%d.%m"))
-            actual_balances.append(round(float(j["end_balance"] or j["start_balance"]), 2))
-            pnl_values.append(round(float(j["net_pnl"] or 0), 2))
+        # Strategy rejimi
+        if not settings.get("start_date"):
+            return JSONResponse({"actual_dates": [], "actual": [], "pnl": [], "planned_dates": [], "planned": []})
 
-        planned_dates    = [start_date.strftime("%d.%m")]
-        planned_balances = [start_bal]
+        start_date = parse_start_date(settings["start_date"])
+        journals   = await get_journal_range(user_id, start_date, today)
 
+        # Rejalangan chiziq
         from datetime import timedelta
         from utils.calculator import is_rest_day as _is_rest_day
 
+        planned_dates    = [start_date.strftime("%d.%m")]
+        planned_balances = [start_bal]
         current   = start_date
         day_count = 0
         while day_count < total_days:
@@ -399,12 +364,25 @@ async def get_chart_data(telegram_id: int):
             if (current - start_date).days > total_days * 3:
                 break
 
+        if not journals:
+            return JSONResponse({
+                "actual_dates":  [],
+                "actual":        [],
+                "pnl":           [],
+                "planned_dates": planned_dates,
+                "planned":       planned_balances,
+            })
+
+        actual_dates    = [j["date"].strftime("%d.%m") for j in journals]
+        actual_balances = [round(float(j["end_balance"] or j["start_balance"] or 0), 2) for j in journals]
+        pnl_values      = [round(float(j["net_pnl"] or 0), 2) for j in journals]
+
         return JSONResponse({
-            "actual_dates":    actual_dates,
-            "actual":          actual_balances,
-            "pnl":             pnl_values,
-            "planned_dates":   planned_dates,
-            "planned":         planned_balances,
+            "actual_dates":  actual_dates,
+            "actual":        actual_balances,
+            "pnl":           pnl_values,
+            "planned_dates": planned_dates,
+            "planned":       planned_balances,
         })
     except Exception as e:
         logger.error(f"get_chart_data xato [telegram_id={telegram_id}]: {e}")

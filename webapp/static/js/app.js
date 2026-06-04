@@ -68,8 +68,22 @@ const SUM = {
 
 /* ─── HELPERS ─── */
 async function apiFetch(ep, extra='') {
-  if (!TG_ID) return null;
-  try { const r = await fetch(`${ep}?telegram_id=${TG_ID}${extra}`); return r.ok ? r.json() : null; } catch { return null; }
+  if (!TG_ID) {
+    console.warn(`apiFetch: TG_ID yo'q, demo data ishlatiladi (${ep})`);
+    return null;
+  }
+  try {
+    const url = `${ep}?telegram_id=${TG_ID}${extra}`;
+    const r = await fetch(url);
+    if (!r.ok) {
+      console.error(`apiFetch xato [${ep}]: HTTP ${r.status}`);
+      return null;
+    }
+    return await r.json();
+  } catch (err) {
+    console.error(`apiFetch xato [${ep}]:`, err);
+    return null;
+  }
 }
 const fm = (v, sign=true) => {
   if (v == null) return '—';
