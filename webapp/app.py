@@ -389,7 +389,78 @@ async def get_chart_data(telegram_id: int):
         raise HTTPException(status_code=500, detail="Server xatosi")
 
 
-@app.get("/api/progression")
+@app.get("/api/stats")
+async def get_trade_stats(telegram_id: int):
+    """
+    Jurnal tab uchun savdo statistikasi.
+    Wins/Losses/BE breakdown, gross/swap/commission/net.
+    """
+    user_id = await _get_user_id_from_telegram(telegram_id)
+    if not user_id:
+        raise HTTPException(status_code=404, detail="Foydalanuvchi topilmadi")
+
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT pnl, swap, commission, result
+                FROM trades
+                WHERE user_id = $1
+                ORDER BY id;
+            """, user_id)
+
+        if not rows:
+            return JSONResponse({})
+
+        wins = [r for r in rows if (r['pnl'] or 0) > 0]
+        losses = [r for r in rows if (r['pnl'] or 0) < 0]
+        bes = [r for r in rows if (r['pnl'] or 0) == 0]
+
+        def agg(group):
+            gross = sum(float(r['pnl'] or 0) for r in group)
+            swap  = sum(float(r['swap'] or 0) for r in group)
+            comm  = sum(float(r['commission'] or 0) for r in group)
+            net   = gross + swap + comm
+            total_net_all = sum(float(r['pnl'] or 0) + float(r['swap'] or 0) + float(r['commission'] or 0) for r in rows)
+            pct   = round((net / abs(total_net_all) * 100), 2) if total_net_all else 0
+            return gross, swap, comm, net, pct
+
+        wg, ws, wc, wn, wp = agg(wins)
+        bg, bs_, bc, bn, bp = agg(bes)
+        lg, ls, lc, ln, lp  = agg(losses)
+        tg, ts, tc, tn, tp  = agg(rows)
+
+        gross_win  = abs(wg)
+        gross_loss = abs(lg)
+        pf = round(gross_win / gross_loss, 2) if gross_loss > 0 else (99.0 if gross_win > 0 else 0.0)
+
+        return JSONResponse({
+            "total_trades":   len(rows),
+            "wins":           len(wins),
+            "losses":         len(losses),
+            "break_even":     len(bes),
+            "biggest_win":    max((float(r['pnl'] or 0) for r in wins), default=0),
+            "biggest_loss":   min((float(r['pnl'] or 0) for r in losses), default=0),
+            "profit_factor":  pf,
+            "wins_gross":     round(wg, 2), "wins_swap":    round(ws, 2),
+            "wins_commission":round(wc, 2), "wins_net":     round(wn, 2),
+            "wins_pct":       wp,           "wins_rr":      0,
+            "be_gross":       round(bg, 2), "be_swap":      round(bs_, 2),
+            "be_commission":  round(bc, 2), "be_net":       round(bn, 2),
+            "be_pct":         bp,           "be_rr":        0,
+            "loss_gross":     round(lg, 2), "loss_swap":    round(ls, 2),
+            "loss_commission":round(lc, 2), "loss_net":     round(ln, 2),
+            "loss_pct":       lp,           "loss_rr":      0,
+            "total_gross":    round(tg, 2), "total_swap":   round(ts, 2),
+            "total_commission":round(tc,2), "total_net":    round(tn, 2),
+            "total_pct":      tp,           "total_rr":     0,
+        })
+    except Exception as e:
+        logger.error(f"get_trade_stats xato [telegram_id={telegram_id}]: {e}")
+        raise HTTPException(status_code=500, detail="Server xatosi")
+
+
+
 async def get_progression(telegram_id: int):
     """
     Barcha kunlar progression ma'lumotlarini qaytaradi.

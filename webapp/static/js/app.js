@@ -31,10 +31,10 @@ function applyMode(mode) {
   if (chip) chip.textContent = mode === 'journal' ? 'JURNAL' : 'LIVE';
 }
 
-/* ─── DEMO DATA ─── */
+/* ─── DEMO DATA (API kelmasa fallback) ─── */
 const mkRng = (seed) => { let x = seed; return () => { x = (x*9301+49297)%233280; return x/233280; }; };
 
-const JOURNAL = (() => {
+let JOURNAL = (() => {
   const r = []; let bal = 2000; const rnd = mkRng(42);
   for (let i = 1; i <= 20; i++) {
     const tgt = +(bal * 0.035).toFixed(2);
@@ -63,19 +63,19 @@ const PROGRESSION = (() => {
   return r;
 })();
 
-const OV = {
-  current_balance: 2847.50, planned_balance: 3124.00,
-  settings: { starting_balance: 2000, daily_profit_rate: 0.20, total_days: 30, start_date: '2025-04-01', broker_name: 'MetaTrader 5' },
-  summary: { total_days: 20, win_days: 15, loss_days: 3, total_pnl: 847.50 }
+let OV = {
+  current_balance: 0, planned_balance: 0,
+  settings: { starting_balance: 0, daily_profit_rate: 0, total_days: 30, start_date: null, broker_name: '—' },
+  summary: { total_days: 0, win_days: 0, loss_days: 0, total_pnl: 0, total_trades: 0 }
 };
 
-const SUM = {
-  total_trades:20, wins:15, losses:3, break_even:2,
-  biggest_win:124.50, biggest_loss:47.20, avg_hold_win:0, avg_hold_loss:0,
-  wins_gross:1290, wins_swap:25.80, wins_commission:-13.54, wins_net:1302, wins_pct:96.42, wins_rr:100.33,
-  be_gross:13.47, be_swap:.26, be_commission:-.21, be_net:13.52, be_pct:1.27, be_rr:.03,
-  loss_gross:-534.65, loss_swap:-10.69, loss_commission:-5.34, loss_net:-547.41, loss_pct:-38.47, loss_rr:-37.45,
-  total_gross:769.80, total_swap:15.39, total_commission:-19.11, total_net:847, total_pct:59.22, total_rr:62.91,
+let SUM = {
+  total_trades:0, wins:0, losses:0, break_even:0,
+  biggest_win:0, biggest_loss:0, avg_hold_win:0, avg_hold_loss:0,
+  wins_gross:0, wins_swap:0, wins_commission:0, wins_net:0, wins_pct:0, wins_rr:0,
+  be_gross:0, be_swap:0, be_commission:0, be_net:0, be_pct:0, be_rr:0,
+  loss_gross:0, loss_swap:0, loss_commission:0, loss_net:0, loss_pct:0, loss_rr:0,
+  total_gross:0, total_swap:0, total_commission:0, total_net:0, total_pct:0, total_rr:0,
 };
 
 /* ─── HELPERS ─── */
@@ -521,21 +521,30 @@ document.addEventListener('click', e => {
 }, { capture: false });
 
 async function loadOverview() {
-  const d = await apiFetch('/api/overview') || OV;
-  const { current_balance:cur, summary:sum, mode } = d;
+  // Parallel ravishda ikki API chaqiruv
+  const [ovData, jData] = await Promise.all([
+    apiFetch('/api/overview'),
+    apiFetch('/api/journal'),
+  ]);
 
-  // Rejimni UI ga qo'llash
-  applyMode(mode || 'strategy');
+  // Global o'zgaruvchilarni yangilash
+  if (ovData) OV = ovData;
+  if (jData?.journal?.length) JOURNAL = jData.journal;
+
+  const d   = ovData || OV;
+  const cur = d.current_balance || 0;
+  const sum = d.summary;
+  const mode = d.mode || 'strategy';
+
+  applyMode(mode);
 
   // Balance
   const abEl = $('ov-balance');
   if (abEl) countUp(abEl, cur, 900);
 
-  // Journal rejimida bugungi PnL — real APIdan
-  const todayPnl = sum?.today_pnl ?? ((() => {
-    const lastDay = [...JOURNAL].reverse().find(j => j.is_completed);
-    return lastDay?.net_pnl || 0;
-  })());
+  // Bugungi PnL — oxirgi yakunlangan kun
+  const lastDay  = [...JOURNAL].reverse().find(j => j.is_completed);
+  const todayPnl = sum?.today_pnl ?? lastDay?.net_pnl ?? 0;
   const todayPct = cur > 0 ? ((todayPnl / cur) * 100) : 0;
 
   const tpEl = $('ov-today-pnl');
@@ -550,16 +559,17 @@ async function loadOverview() {
   }
 
   // KPI
-  const comp = JOURNAL.filter(j => j.is_completed);
-  const wins = comp.filter(j => !j.is_rolled_over).length;
-  const wr   = comp.length > 0 ? Math.round((wins/comp.length)*100) : 0;
-  const totalPnl = sum?.total_pnl ?? comp.reduce((s,j) => s+(j.net_pnl||0), 0);
+  const comp     = JOURNAL.filter(j => j.is_completed);
+  const wins     = comp.filter(j => !j.is_rolled_over).length;
+  const wr       = comp.length > 0 ? Math.round((wins / comp.length) * 100) : 0;
+  const totalPnl = sum?.total_pnl ?? comp.reduce((s, j) => s + (j.net_pnl || 0), 0);
+  const totalTrades = sum?.total_trades ?? JOURNAL.length;
 
-  txt('ov-total-trades', sum?.total_trades || SUM.total_trades || comp.length);
-  // Journal rejimida win rate ko'rsatilmaydi (maqsad yo'q)
+  txt('ov-total-trades', totalTrades);
+
   const wrEl = $('ov-winrate');
   if (wrEl) {
-    if (window._mode === 'journal') {
+    if (mode === 'journal') {
       wrEl.textContent = '—';
       wrEl.className = 'kpi-val';
     } else {
@@ -573,8 +583,8 @@ async function loadOverview() {
     tpnlEl.className = `kpi-val ${totalPnl >= 0 ? 'up' : 'dn'}`;
   }
 
-  // Init month nav
-  const startDate = d?.settings?.start_date || OV?.settings?.start_date || '2025-04-01';
+  // Hex xarita
+  const startDate = d?.settings?.start_date || '2025-01-01';
   const parts = startDate.split('-');
   window._hexNav.year  = parseInt(parts[0]);
   window._hexNav.month = parseInt(parts[1]) - 1;
@@ -582,10 +592,11 @@ async function loadOverview() {
   refreshHexOv();
 
   // Streak — faqat strategy rejimida
-  if (window._mode === 'strategy') {
+  if (mode === 'strategy') {
     let streak = 0;
-    for (let i = JOURNAL.length-1; i >= 0; i--) {
-      if (JOURNAL[i].is_completed && !JOURNAL[i].is_rolled_over) streak++; else break;
+    for (let i = JOURNAL.length - 1; i >= 0; i--) {
+      if (JOURNAL[i].is_completed && !JOURNAL[i].is_rolled_over) streak++;
+      else break;
     }
     const sw = $('ov-streak-wrap');
     if (sw && streak > 0) {
@@ -686,17 +697,60 @@ async function loadJournal() {
   const jb = $('journal-tbody'); if (!jb) return;
   jb.innerHTML = '<tr><td colspan="5"><div class="loading-box"><div class="spinner"></div></div></td></tr>';
 
-  let d = await apiFetch('/api/journal'); if (!d) d = { journal: JOURNAL };
-  if (!d?.journal?.length) {
+  const [jData, statsData] = await Promise.all([
+    apiFetch('/api/journal'),
+    apiFetch('/api/stats'),
+  ]);
+
+  if (jData?.journal?.length) JOURNAL = jData.journal;
+
+  if (!JOURNAL.length) {
     jb.innerHTML = '<tr><td colspan="5"><div class="empty-box">Ma\'lumot topilmadi</div></td></tr>';
     return;
   }
 
-  // Store journal data globally for filter/sort
-  window._journalData = d.journal;
-  window._journalSort = 'desc'; // desc = Yangi→Eski
+  window._journalData   = JOURNAL;
+  window._journalSort   = 'desc';
   window._journalFilter = 'all';
   renderJournalTable();
+
+  // SUM ni API stats dan yangilash
+  if (statsData) {
+    SUM = {
+      total_trades:   statsData.total_trades   || 0,
+      wins:           statsData.wins            || 0,
+      losses:         statsData.losses          || 0,
+      break_even:     statsData.break_even      || 0,
+      biggest_win:    statsData.biggest_win     || 0,
+      biggest_loss:   statsData.biggest_loss    || 0,
+      avg_hold_win:   statsData.avg_hold_win    || 0,
+      avg_hold_loss:  statsData.avg_hold_loss   || 0,
+      wins_gross:     statsData.wins_gross      || 0,
+      wins_swap:      statsData.wins_swap       || 0,
+      wins_commission:statsData.wins_commission || 0,
+      wins_net:       statsData.wins_net        || 0,
+      wins_pct:       statsData.wins_pct        || 0,
+      wins_rr:        statsData.wins_rr         || 0,
+      be_gross:       statsData.be_gross        || 0,
+      be_swap:        statsData.be_swap         || 0,
+      be_commission:  statsData.be_commission   || 0,
+      be_net:         statsData.be_net          || 0,
+      be_pct:         statsData.be_pct          || 0,
+      be_rr:          statsData.be_rr           || 0,
+      loss_gross:     statsData.loss_gross      || 0,
+      loss_swap:      statsData.loss_swap       || 0,
+      loss_commission:statsData.loss_commission || 0,
+      loss_net:       statsData.loss_net        || 0,
+      loss_pct:       statsData.loss_pct        || 0,
+      loss_rr:        statsData.loss_rr         || 0,
+      total_gross:    statsData.total_gross     || 0,
+      total_swap:     statsData.total_swap      || 0,
+      total_commission:statsData.total_commission || 0,
+      total_net:      statsData.total_net       || 0,
+      total_pct:      statsData.total_pct       || 0,
+      total_rr:       statsData.total_rr        || 0,
+    };
+  }
 
   /* Result table */
   const rtb = $('result-tbody');
@@ -725,10 +779,11 @@ async function loadJournal() {
     }).join('');
   }
 
-  txt('rs-total', SUM.total_trades); txt('rs-wins', SUM.wins);
-  txt('rs-be', SUM.break_even);      txt('rs-losses', SUM.losses);
+  txt('rs-total', SUM.total_trades);
+  txt('rs-wins',  SUM.wins);
+  txt('rs-be',    SUM.break_even);
+  txt('rs-losses',SUM.losses);
 
-  /* Custom SVG Donut — exact React PieChart.jsx replica */
   renderCustomPie();
 }
 
@@ -1112,7 +1167,8 @@ async function loadAnaliz() {
   $('chart-pnl-wrap').innerHTML     = '<div class="loading-box"><div class="spinner"></div></div>';
   $('chart-balance-wrap').innerHTML = '<div class="loading-box"><div class="spinner"></div></div>';
 
-  let data = await apiFetch('/api/progression'); if (!data) data = { progression: PROGRESSION };
+  let data = await apiFetch('/api/progression');
+  if (!data) data = { progression: PROGRESSION };
 
   if (!data?.progression?.length) {
     $('chart-balance-wrap').innerHTML = '<div class="empty-box">Ma\'lumot yetarli emas</div>';
@@ -1167,20 +1223,27 @@ async function loadAnaliz() {
     });
   }
 
-  /* Rings */
-  const done = JOURNAL.filter(j => j.is_completed);
+  /* Rings — JOURNAL va OV dan haqiqiy ma'lumot */
+  const done      = JOURNAL.filter(j => j.is_completed);
   const winsCount = done.filter(j => !j.is_rolled_over).length;
-  const wr = done.length > 0 ? (winsCount/done.length)*100 : 0;
-  const s  = OV.settings.starting_balance, c = OV.current_balance, p = OV.planned_balance;
-  const progPct = p > s ? ((c-s)/(p-s))*100 : 0;
-  const pfPct   = Math.min((2.38/4)*100, 100);
+  const wr        = done.length > 0 ? (winsCount / done.length) * 100 : 0;
+  const s         = OV?.settings?.starting_balance || 0;
+  const c         = OV?.current_balance || 0;
+  const p         = OV?.planned_balance || 0;
+  const progPct   = p > s ? ((c - s) / (p - s)) * 100 : 0;
+
+  // Profit Factor — SUM dan hisoblash
+  const grossWin  = Math.abs(SUM.wins_gross  || 0);
+  const grossLoss = Math.abs(SUM.loss_gross  || 0);
+  const pf        = grossLoss > 0 ? grossWin / grossLoss : grossWin > 0 ? 99 : 0;
+  const pfPct     = Math.min((pf / 4) * 100, 100);
 
   animateRing('ring-wr',   wr);
   animateRing('ring-prog', Math.max(0, progPct));
   animateRing('ring-pf',   pfPct);
-  txt('ring-wr-val',   wr.toFixed(0)+'%');
-  txt('ring-prog-val', Math.max(0,Math.round(progPct))+'%');
-  txt('ring-pf-val',   '2.38');
+  txt('ring-wr-val',   wr.toFixed(0) + '%');
+  txt('ring-prog-val', Math.max(0, Math.round(progPct)) + '%');
+  txt('ring-pf-val',   pf.toFixed(2));
 
   buildRadar(data.evaluation ?? null);
 }
