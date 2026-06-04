@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+<title>Trade Planner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+<div class="app">
+
+<!-- MAIN HEADER -->
+<div class="header" id="main-header">
+  <div class="header-top">
+    <div class="logo">
+      <div class="logo-icon">📊</div>
+      <span class="logo-text">Trade Planner</span>
+    </div>
+    <span class="header-chip">LIVE</span>
+  </div>
+  <div class="tabs">
+    <button class="tab active" data-tab="overview">Overview</button>
+    <button class="tab" data-tab="strategy">Strategiya</button>
+    <button class="tab" data-tab="journal">Jurnal</button>
+    <button class="tab" data-tab="analiz">Analiz</button>
+  </div>
+</div>
+
+<!-- DETAIL HEADER -->
+<div class="header" id="detail-header" style="display:none">
+  <div class="header-top">
+    <button class="back-btn" id="back-btn">← Orqaga</button>
+    <span class="header-chip" id="detail-badge">KUN</span>
+  </div>
+</div>
+
+<div id="main-view">
+
+  <!-- ═══ OVERVIEW ═══ -->
+  <div class="tab-content active" id="tab-overview">
+
+    <div class="bal-hero" id="ov-bal-hero">
+      <div class="bal-hero-lbl"><div class="live-dot"></div>Joriy balans</div>
+      <div class="bal-row">
+        <div class="bal-primary">
+          <div class="lbl">Balans</div>
+          <div class="val" id="ov-balance">—</div>
+        </div>
+        <div class="bal-secondary">
+          <div class="lbl">Bugungi o'sish</div>
+          <div class="val" id="ov-today-pct" style="font-size:22px">—</div>
+        </div>
+      </div>
+      <div class="bal-diff">
+        <span class="bd-lbl">Bugungi PnL</span>
+        <span class="bd-val" id="ov-today-pnl">—</span>
+      </div>
+    </div>
+
+    <div class="kpi-bar">
+      <div class="kpi-item">
+        <div class="kpi-lbl">Jami savdolar</div>
+        <div class="kpi-val" id="ov-total-trades">—</div>
+      </div>
+      <div class="kpi-item">
+        <div class="kpi-lbl">Win Rate</div>
+        <div class="kpi-val up" id="ov-winrate">—</div>
+      </div>
+      <div class="kpi-item">
+        <div class="kpi-lbl">Jami PnL</div>
+        <div class="kpi-val up" id="ov-total-pnl">—</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title"><span class="ctdot"></span>Kunlik natijalar xaritasi</div>
+      <div class="month-nav">
+        <button class="mnav-arrow" onclick="hexNavMonth(-1)">&#8249;</button>
+        <div class="mnav-center" onclick="toggleMonthPanel()">
+          <span class="mnav-label" id="mnav-label">2025 Aprel</span>
+          <span class="mnav-caret" id="mnav-caret">▾</span>
+        </div>
+        <button class="mnav-arrow" onclick="hexNavMonth(1)">&#8250;</button>
+      </div>
+      <div class="month-panel" id="month-panel" style="display:none">
+        <div class="mpanel-years" id="mpanel-years"></div>
+        <div class="mpanel-months" id="mpanel-months"></div>
+      </div>
+      <div class="hex-canvas-wrap" id="hex-canvas-wrap-ov">
+        <svg id="hex-svg-ov" xmlns="http://www.w3.org/2000/svg"></svg>
+      </div>
+      <div class="hex-legend">
+        <div class="hex-leg-item"><div class="hex-leg-swatch" style="background:rgba(0,200,120,0.75)"></div><span>Win</span></div>
+        <div class="hex-leg-item"><div class="hex-leg-swatch" style="background:rgba(255,40,80,0.65)"></div><span>Loss</span></div>
+        <div class="hex-leg-item"><div class="hex-leg-swatch" style="background:rgba(20,18,45,0.7)"></div><span>Kutilmoqda</span></div>
+      </div>
+      <div id="ov-streak-wrap"></div>
+    </div>
+
+  </div><!-- /overview -->
+
+  <!-- ═══ STRATEGIYA ═══ -->
+  <div class="tab-content" id="tab-strategy">
+
+    <div class="bal-hero">
+      <div class="bal-hero-lbl"><div class="live-dot"></div>Balans holati</div>
+      <div class="bal-row">
+        <div class="bal-primary">
+          <div class="lbl">Haqiqiy balans</div>
+          <div class="val" id="actual-balance">—</div>
+        </div>
+        <div class="bal-secondary">
+          <div class="lbl">Rejalangan</div>
+          <div class="val" id="planned-balance">—</div>
+        </div>
+      </div>
+      <div class="bal-diff">
+        <span class="bd-lbl">Farq (haqiqiy − reja)</span>
+        <span class="bd-val" id="bal-diff">—</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title"><span class="ctdot"></span>Progress</div>
+      <div class="prog-block">
+        <div class="prog-meta"><span class="prog-lbl">Kunlar</span><span class="prog-val" id="prog-days-txt">0 / 0</span></div>
+        <div class="prog-track"><div class="prog-fill blue" id="prog-days-bar"></div></div>
+      </div>
+      <div class="prog-block">
+        <div class="prog-meta"><span class="prog-lbl">Maqsadga yaqinlik</span><span class="prog-val" id="prog-bal-txt">0%</span></div>
+        <div class="prog-track"><div class="prog-fill green" id="prog-bal-bar"></div></div>
+      </div>
+    </div>
+
+    <div class="kpi-bar">
+      <div class="kpi-item"><div class="kpi-lbl">Avg Daily</div><div class="kpi-val up" id="kpi-avg">—</div></div>
+      <div class="kpi-item"><div class="kpi-lbl">Best Day</div><div class="kpi-val up" id="kpi-best">—</div></div>
+      <div class="kpi-item"><div class="kpi-lbl">Worst Day</div><div class="kpi-val dn" id="kpi-worst">—</div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title"><span class="ctdot"></span>Natijalar</div>
+      <div class="stats-grid">
+        <div class="stat-box"><div class="sbl">Jami PnL</div><div class="sbv" id="total-pnl">—</div></div>
+        <div class="stat-box"><div class="sbl">Win Rate</div><div class="sbv gold" id="win-rate">—</div></div>
+        <div class="stat-box"><div class="sbl">✅ Bajarildi</div><div class="sbv green" id="win-days">—</div></div>
+        <div class="stat-box"><div class="sbl">❌ Rollover</div><div class="sbv red" id="loss-days">—</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title"><span class="ctdot"></span>Savdolar taqsimoti</div>
+      <div class="flow-wrap">
+        <div class="flow-center">
+          <span class="flow-cv" id="flow-total">—</span>
+          <span class="flow-cl">Jami</span>
+        </div>
+        <div class="flow-lines">
+          <div class="flow-line fw"></div>
+          <div class="flow-line fl"></div>
+        </div>
+        <div class="flow-branches">
+          <div class="fbranch fbw">
+            <div>
+              <div class="fb-lbl">Wins</div>
+              <div class="fb-val wc" id="flow-wins">—</div>
+              <div class="fb-sub">Biggest: <span id="flow-bwin">—</span></div>
+            </div>
+            <div style="text-align:right">
+              <div class="fb-lbl">Avg hold</div>
+              <div class="fb-val" id="flow-hwins" style="font-size:12px">0d</div>
+            </div>
+          </div>
+          <div class="fbranch fbl">
+            <div>
+              <div class="fb-lbl">Losses</div>
+              <div class="fb-val lc" id="flow-losses">—</div>
+              <div class="fb-sub">Biggest: <span id="flow-bloss">—</span></div>
+            </div>
+            <div style="text-align:right">
+              <div class="fb-lbl">Avg hold</div>
+              <div class="fb-val" id="flow-hloss" style="font-size:12px">0d</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title"><span class="ctdot"></span>Kunlik natijalar xaritasi</div>
+      <div class="hex-canvas-wrap" id="hex-canvas-wrap">
+        <svg id="hex-svg" xmlns="http://www.w3.org/2000/svg"></svg>
+      </div>
+      <div class="hex-legend">
+        <div class="hex-leg-item"><div class="hex-leg-swatch" style="background:rgba(57,255,172,0.85)"></div><span>Yuqori daromad</span></div>
+        <div class="hex-leg-item"><div class="hex-leg-swatch" style="background:rgba(57,255,172,0.3)"></div><span>Past daromad</span></div>
+        <div class="hex-leg-item"><div class="hex-leg-swatch" style="background:rgba(255,80,110,0.75)"></div><span>Zarar</span></div>
+        <div class="hex-leg-item"><div class="hex-leg-swatch" style="background:rgba(255,255,255,0.07)"></div><span>Kutilmoqda</span></div>
+      </div>
+      <div id="streak-wrap"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title"><span class="ctdot"></span>Sozlamalar</div>
+      <div class="si"><span class="si-lbl">Boshlang'ich balans</span><span class="si-val" id="s-startbal">—</span></div>
+      <div class="si"><span class="si-lbl">Kunlik foiz</span><span class="si-val" id="s-rate">—</span></div>
+      <div class="si"><span class="si-lbl">Kun soni</span><span class="si-val" id="s-days">—</span></div>
+      <div class="si"><span class="si-lbl">Boshlanish sanasi</span><span class="si-val" id="s-date">—</span></div>
+      <div class="si"><span class="si-lbl">Broker</span><span class="si-val" id="s-broker">—</span></div>
+    </div>
+
+  </div><!-- /strategy -->
+
+  <!-- ═══ JURNAL ═══ -->
+  <div class="tab-content" id="tab-journal">
+
+    <div class="card">
+      <div class="card-title"><span class="ctdot"></span>Natijalar jadvali</div>
+      <div class="rs-strip">
+        <div class="rs-item"><div class="rs-lbl">Trades</div><div class="rs-val" id="rs-total">—</div></div>
+        <div class="rs-item"><div class="rs-lbl">Wins</div><div class="rs-val rsw" id="rs-wins">—</div></div>
+        <div class="rs-item"><div class="rs-lbl">Break Even</div><div class="rs-val rsb" id="rs-be">—</div></div>
+        <div class="rs-item"><div class="rs-lbl">Losses</div><div class="rs-val rsl" id="rs-losses">—</div></div>
+      </div>
+      <div class="tbl-scroll">
+        <table class="rtbl">
+          <thead><tr><th>Natija</th><th>Gross</th><th>Swap</th><th>Komiss.</th><th>Net PnL</th><th>%</th><th>R:R</th></tr></thead>
+          <tbody id="result-tbody">
+            <tr><td colspan="7"><div class="loading-box"><div class="spinner"></div></div></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="pie-row">
+        <div class="pie-cw"><canvas id="pie-chart" width="100" height="100"></canvas></div>
+        <div class="pie-leg" id="pie-legend"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title"><span class="ctdot"></span>Kunlik jurnal</div>
+      <div class="jfilter-row">
+        <div class="jfilter-btns">
+          <button class="jfbtn active" data-filter="all"  onclick="setJFilter(this,'all')">Barchasi</button>
+          <button class="jfbtn"        data-filter="win"  onclick="setJFilter(this,'win')">Bajarildi</button>
+          <button class="jfbtn"        data-filter="loss" onclick="setJFilter(this,'loss')">Rollover</button>
+          <button class="jfbtn"        data-filter="pend" onclick="setJFilter(this,'pend')">Davom</button>
+        </div>
+        <div class="jsort-wrap">
+          <button class="jsort-btn" id="jsort-btn" onclick="toggleJSort()">
+            <span id="jsort-lbl">Yangi → Eski</span>
+            <span class="jsort-arr" id="jsort-arr">↓</span>
+          </button>
+        </div>
+      </div>
+      <div class="tbl-scroll">
+        <table class="jtbl">
+          <thead>
+            <tr>
+              <th>Kun</th>
+              <th>Sana</th>
+              <th id="jtbl-target-th">Maqsad</th>
+              <th>PnL</th>
+              <th>Holat</th>
+            </tr>
+          </thead>
+          <tbody id="journal-tbody">
+            <tr><td colspan="5"><div class="loading-box"><div class="spinner"></div></div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div><!-- /journal -->
+
+  <!-- ═══ ANALIZ ═══ -->
+  <div class="tab-content" id="tab-analiz">
+
+    <div class="card">
+      <div class="card-title"><span class="ctdot"></span>Samaradorlik ko'rsatkichlari</div>
+      <div class="rings-row">
+        <div class="ring-wrap">
+          <svg class="ring-svg" viewBox="0 0 90 90">
+            <defs><linearGradient id="gW" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stop-color="#009960"/><stop offset="100%" stop-color="#3dffc0"/>
+            </linearGradient></defs>
+            <circle cx="45" cy="45" r="37" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="7"/>
+            <circle id="ring-wr" cx="45" cy="45" r="37" fill="none" stroke="url(#gW)" stroke-width="7"
+              stroke-linecap="round" stroke-dasharray="232.5" stroke-dashoffset="232.5"
+              transform="rotate(-90 45 45)" style="transition:stroke-dashoffset 1.1s cubic-bezier(.4,0,.2,1)"/>
+            <text x="45" y="42" text-anchor="middle" fill="#ffffff" font-family="Space Mono" font-size="12" font-weight="700" id="ring-wr-val">—</text>
+            <text x="45" y="56" text-anchor="middle" fill="#4a4a6a" font-family="Sora" font-size="8">Win Rate</text>
+          </svg>
+        </div>
+        <div class="ring-wrap">
+          <svg class="ring-svg" viewBox="0 0 90 90">
+            <defs><linearGradient id="gP" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stop-color="#1a4fd4"/><stop offset="100%" stop-color="#7aaaff"/>
+            </linearGradient></defs>
+            <circle cx="45" cy="45" r="37" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="7"/>
+            <circle id="ring-prog" cx="45" cy="45" r="37" fill="none" stroke="url(#gP)" stroke-width="7"
+              stroke-linecap="round" stroke-dasharray="232.5" stroke-dashoffset="232.5"
+              transform="rotate(-90 45 45)" style="transition:stroke-dashoffset 1.1s cubic-bezier(.4,0,.2,1) .18s"/>
+            <text x="45" y="42" text-anchor="middle" fill="#ffffff" font-family="Space Mono" font-size="12" font-weight="700" id="ring-prog-val">—</text>
+            <text x="45" y="56" text-anchor="middle" fill="#4a4a6a" font-family="Sora" font-size="8">Progress</text>
+          </svg>
+        </div>
+        <div class="ring-wrap">
+          <svg class="ring-svg" viewBox="0 0 90 90">
+            <defs><linearGradient id="gG" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stop-color="#ffaa00"/><stop offset="100%" stop-color="#ffcc44"/>
+            </linearGradient></defs>
+            <circle cx="45" cy="45" r="37" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="7"/>
+            <circle id="ring-pf" cx="45" cy="45" r="37" fill="none" stroke="url(#gG)" stroke-width="7"
+              stroke-linecap="round" stroke-dasharray="232.5" stroke-dashoffset="232.5"
+              transform="rotate(-90 45 45)" style="transition:stroke-dashoffset 1.1s cubic-bezier(.4,0,.2,1) .36s"/>
+            <text x="45" y="42" text-anchor="middle" fill="#ffffff" font-family="Space Mono" font-size="12" font-weight="700" id="ring-pf-val">—</text>
+            <text x="45" y="56" text-anchor="middle" fill="#4a4a6a" font-family="Sora" font-size="8">P. Factor</text>
+          </svg>
+        </div>
+      </div>
+    </div>
+
+    <div class="card ai-card">
+      <div class="card-title"><span class="ai-dot"></span>AI Tahlil</div>
+      <div id="ai-body">
+        <div class="ai-placeholder">
+          <div class="ai-icon">🤖</div>
+          <div class="ai-hint">Trading natijalari asosida shaxsiy tahlil va maslahat olish uchun bosing</div>
+          <button class="ai-btn" id="ai-btn" onclick="runAI()">
+            <span id="ai-btn-txt">Tahlil qilish</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title"><span class="ctdot"></span>Kunlik PnL</div>
+      <div id="chart-pnl-wrap"><div class="loading-box"><div class="spinner"></div></div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title"><span class="ctdot"></span>Balans o'sishi</div>
+      <div id="chart-balance-wrap"><div class="loading-box"><div class="spinner"></div></div></div>
+    </div>
+
+    <div class="card" id="radar-card">
+      <div class="card-title"><span class="ctdot"></span>Trading Mastery Score</div>
+      <div class="r-score-row">
+        <div class="r-score-badge">
+          <span class="r-score-lbl">Score</span>
+          <span class="r-score-num" id="radar-score-num">—</span>
+          <span class="r-score-lbl">/ 100</span>
+        </div>
+      </div>
+      <div class="r-svg-wrap" id="radar-svg-wrap">
+        <svg id="radar-svg" viewBox="0 0 300 300" xmlns="http://www.w3.org/2000/svg"></svg>
+        <div class="r-tooltip" id="radar-tooltip">
+          <div class="r-tt-name" id="rtt-name"></div>
+          <div class="r-tt-val" id="rtt-val"></div>
+          <div class="r-tt-desc" id="rtt-desc"></div>
+        </div>
+      </div>
+      <div class="r-metrics-grid" id="radar-metrics"></div>
+    </div>
+
+  </div><!-- /analiz -->
+
+</div><!-- /main-view -->
+
+<!-- DETAIL VIEW -->
+<div id="detail-view" style="display:none">
+  <div style="padding:14px 14px 0">
+    <div class="card" id="day-card"></div>
+    <div class="card">
+      <div class="card-title"><span class="ctdot"></span>Savdolar</div>
+      <div id="trades-list"></div>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL -->
+<div id="trade-modal" class="modal" style="display:none">
+  <div class="modal-bg" id="modal-bg"></div>
+  <div class="modal-sheet" id="modal-body"></div>
+</div>
+
+</div><!-- /app -->
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="/static/js/app.js"></script>
+</body>
+</html>
