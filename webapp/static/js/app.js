@@ -3,7 +3,19 @@
 /* ─── TELEGRAM ─── */
 const tg = window.Telegram?.WebApp;
 if (tg) { tg.ready(); tg.expand(); }
-const TG_ID = tg?.initDataUnsafe?.user?.id || null;
+
+// TG_ID olish — bir necha usul bilan urinib ko'ramiz
+const TG_ID = (
+  tg?.initDataUnsafe?.user?.id ||
+  tg?.initData && new URLSearchParams(tg.initData).get('user') &&
+    JSON.parse(new URLSearchParams(tg.initData).get('user'))?.id ||
+  new URLSearchParams(window.location.search).get('telegram_id') ||
+  null
+);
+
+console.log('[TradePlanner] TG_ID:', TG_ID);
+console.log('[TradePlanner] initData:', tg?.initData?.slice?.(0, 80));
+console.log('[TradePlanner] initDataUnsafe:', JSON.stringify(tg?.initDataUnsafe));
 
 /* ─── GLOBAL MODE ─── */
 // 'strategy' yoki 'journal' — API dan olinadi
